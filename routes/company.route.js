@@ -1,7 +1,14 @@
 import { Router } from "express";
 import { verifyJWT } from "../middlewares/auth.middleware.js";
 import authorizeRole from "../middlewares/authorizableRole.js";
-import { addSkill, collabWithCollege, createEmployee, postJob, resetPassword } from "../controllers/company.controller.js";
+import {
+  addSkill,
+  collabWithCollege,
+  createEmployee,
+  postJob,
+  resetPassword,
+  makeStudentApplicationDecision,
+} from "../controllers/company.controller.js";
 
 const router = Router();
 
@@ -11,5 +18,8 @@ router.post("/reset-password",verifyJWT,authorizeRole("companyAdmin"),resetPassw
 
 router.post("/create/job",verifyJWT,authorizeRole("companyAdmin"),postJob);
 router.post("/add/skill",verifyJWT,authorizeRole("companyAdmin","employee"),addSkill);
+
+router.post("/application/:applicationId/:result",verifyJWT,authorizeRole("employee"),makeStudentApplicationDecision);
+
 
 export default router;
