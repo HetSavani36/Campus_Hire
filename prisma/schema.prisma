@@ -1,0 +1,281 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String   @id @default(uuid())
+  name         String
+  email        String   @unique @db.VarChar(255)
+  password     String
+  role         UserRole
+  refreshToken String   @default("")
+  hasCompletedProfile Boolean @default(false)
+  metadata Json?
+
+  mentor   Mentor?
+  employee Employee?
+  student  Student?
+
+  createdAt DateTime @default(now())
+
+  @@index([email])
+}
+
+enum UserRole {
+  companyAdmin
+  collegeAdmin
+  mentor
+  employee
+  student
+}
+
+model College {
+  id      String  @id @default(uuid())
+  name    String  @unique
+  address String
+  email   String  @unique
+  phone   String?
+
+  mentors  Mentor[]
+  students Student[]
+  jobs     Job[]
+  collabs  Collab[]
+
+  @@index([name])
+}
+
+model Company {
+  id             String        @id @default(uuid())
+  name           String        @unique
+  registrationNo String        @unique
+  address        String
+  email          String        @unique
+  contactNo      String
+  status         CompanyStatus @default(active)
+
+  employees Employee[]
+  jobs      Job[]
+  collabs   Collab[]
+
+  @@index([name])
+  @@index([registrationNo])
+}
+
+enum CompanyStatus {
+  active
+  inactive
+}
+
+model Mentor {
+  id        String @id @default(uuid())
+  userId    String @unique
+  collegeId String
+
+  user    User    @relation(fields: [userId], references: [id])
+  college College @relation(fields: [collegeId], references: [id])
+
+  approvals Application[]
+  jobs      Job[]
+
+  @@index([collegeId])
+}
+
+model Employee {
+  id        String @id @default(uuid())
+  userId    String @unique
+  companyId String
+
+  user    User    @relation(fields: [userId], references: [id])
+  company Company @relation(fields: [companyId], references: [id])
+
+  interviews Interview[]
+  feedbacks  Feedback[]
+
+  @@index([companyId])
+}
+
+model Student {
+  id        String  @id @default(uuid())
+  userId    String  @unique
+  collegeId String  
+  year      Int
+  branch    String
+  rollNo    String
+  resume    String?
+  aboutMe   String?
+
+  user    User    @relation(fields: [userId], references: [id])
+  college College @relation(fields: [collegeId], references: [id])
+
+  skills       StudentSkill[]
+  applications Application[]
+  interviews   Interview[]
+  feedbacks    Feedback[]
+  certificates Certificate[]
+
+  @@index([collegeId])
+  @@index([branch])
+}
+
+model Skill {
+  id   String @id @default(uuid())
+  name String @unique
+
+  studentSkills StudentSkill[]
+  jobSkills     JobSkill[]
+
+  @@index([name])
+}
+
+model StudentSkill {
+  studentId String
+  skillId   String
+
+  student Student @relation(fields: [studentId], references: [id])
+  skill   Skill   @relation(fields: [skillId], references: [id])
+
+  @@id([studentId, skillId])
+  @@index([skillId])
+}
+
+model JobSkill {
+  jobId   String
+  skillId String
+
+  job   Job   @relation(fields: [jobId], references: [id])
+  skill Skill @relation(fields: [skillId], references: [id])
+
+  @@id([jobId, skillId])
+  @@index([skillId])
+}
+
+model Job {
+  id         String    @id @default(uuid())
+  title      String
+  salary     Int?
+  tenure     String?
+  address    String?
+  status     JobStatus @default(active)
+  dueDate    DateTime?
+  collegeId  String
+  companyId  String
+  isApproved Boolean   @default(false)
+  createdAt  DateTime  @default(now())
+  mentorId   String?
+
+  mentor  Mentor?  @relation(fields: [mentorId], references: [id])
+  company Company  @relation(fields: [companyId], references: [id])
+  college College? @relation(fields: [collegeId], references: [id])
+
+  applications Application[]
+  jobSkills    JobSkill[]
+
+  @@index([companyId])
+  @@index([collegeId])
+}
+
+enum JobStatus {
+  active
+  closed
+}
+
+model Application {
+  id             String            @id @default(uuid())
+  studentId      String
+  jobId          String
+  mentorId       String?
+  status         ApplicationStatus @default(pending)
+  mentorApproval Boolean           @default(false)
+
+  appliedAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  student Student @relation(fields: [studentId], references: [id])
+  job     Job     @relation(fields: [jobId], references: [id])
+  mentor  Mentor? @relation(fields: [mentorId], references: [id])
+
+  interview    Interview?
+  certificates Certificate[]
+
+  @@index([studentId])
+  @@index([jobId])
+  @@index([status])
+}
+
+enum ApplicationStatus {
+  pending
+  rejected
+  shortlisted
+  hired
+}
+
+model Interview {
+  id            String   @id @default(uuid())
+  studentId     String
+  employeeId    String
+  applicationId String   @unique
+  date          DateTime
+  time          String
+  address       String
+  selected      Boolean  @default(false)
+
+  student     Student     @relation(fields: [studentId], references: [id])
+  employee    Employee    @relation(fields: [employeeId], references: [id])
+  application Application @relation(fields: [applicationId], references: [id])
+
+  @@index([employeeId])
+  @@index([studentId])
+}
+
+model Certificate {
+  id            String   @id @default(uuid())
+  studentId     String
+  applicationId String
+  fileUrl       String
+  issuedAt      DateTime @default(now())
+
+  student     Student     @relation(fields: [studentId], references: [id])
+  application Application @relation(fields: [applicationId], references: [id])
+
+  @@unique([studentId, applicationId]) // one certificate per internship
+  @@index([studentId])
+  @@index([applicationId])
+}
+
+model Feedback {
+  id         String @id @default(uuid())
+  employeeId String
+  studentId  String
+  feedback   String
+
+  employee Employee @relation(fields: [employeeId], references: [id])
+  student  Student  @relation(fields: [studentId], references: [id])
+
+  @@index([employeeId])
+  @@index([studentId])
+}
+
+model Collab {
+  id        String       @id @default(uuid())
+  collegeId String
+  companyId String
+  status    CollabStatus @default(pending)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  college College @relation(fields: [collegeId], references: [id])
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@unique([collegeId, companyId]) // Prevent duplicate collaborations
+}
+
+enum CollabStatus {
+  pending
+  accepted
+  rejected
+}
