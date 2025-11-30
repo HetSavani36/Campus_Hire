@@ -27,6 +27,7 @@ import collegeRouter from "./routes/college.route.js";
 import userRouter from "./routes/user.route.js"
 import companyRouter from "./routes/company.route.js";
 import studentRouter from "./routes/student.route.js";
+import mentorRouter from "./routes/mentor.route.js";
 
 
 app.use("/api/auth",authRouter)
@@ -34,6 +35,7 @@ app.use("/api/college", collegeRouter);
 app.use("/api/user", userRouter);
 app.use("/api/company", companyRouter);
 app.use("/api/student", studentRouter);
+app.use("/api/mentor", mentorRouter);
 
 
 const PORT=process.env.PORT || 3000
