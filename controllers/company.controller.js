@@ -82,7 +82,7 @@ const createEmployee=asyncHandler(async(req,res)=>{
 
 
 const collabWithCollege=asyncHandler(async(req,res)=>{
-    const {collegeId}=req.body
+    const {collegeId}=req.params
     if(!collegeId) throw new ApiError(403,"please provide college id")
     
     const company=await prisma.company.findUnique({
@@ -120,7 +120,7 @@ const collabWithCollege=asyncHandler(async(req,res)=>{
 
 
 const resetPassword = asyncHandler(async (req, res) => {
-  const { userId } = req.body;
+  const { userId } = req.params;
   const user = await prisma.user.findUnique({
     where: { id: userId },
     select: {
@@ -265,7 +265,8 @@ const postJob=asyncHandler(async(req,res)=>{
 
 
 const makeStudentApplicationDecision=asyncHandler(async(req,res)=>{
-    const {applicationId,result}=req.params
+    const {applicationId}=req.params
+    const {result}=req.params
     if(!applicationId || !result) throw new ApiError(403,"please provide studentId and your decision")
     if(result!=="1" && result!=="0") throw new ApiError(403,"please provide proper decision in either 0 or 1")
 

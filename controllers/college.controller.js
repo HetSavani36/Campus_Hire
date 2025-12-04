@@ -77,7 +77,8 @@ const createMentor=asyncHandler(async(req,res)=>{
 })
 
 const collabDecision=asyncHandler(async(req,res)=>{
-    const { companyId, result } = req.params
+    const { companyId } = req.params
+    const {result}=req.body
     if(!companyId || !result) throw new ApiError(403,"please provide all details")
     if(result!=="0" && result!=="1") throw new ApiError(403,"provide proper result value")
 
@@ -121,7 +122,7 @@ const collabDecision=asyncHandler(async(req,res)=>{
 })
 
 const resetPassword=asyncHandler(async(req,res)=>{
-    const {userId}=req.body
+    const {userId}=req.params
     const user=await prisma.user.findUnique({
       where:{id:userId},
       select:{
@@ -207,7 +208,8 @@ const jobApprovalDecision=asyncHandler(async(req,res)=>{
 })
 
 const assignMentor=asyncHandler(async(req,res)=>{
-  const {mentorId,jobId}=req.body
+  const {mentorId}=req.body
+  const {jobId}=req.params
   if(!mentorId || !jobId) throw new ApiError(403,"please provide all details")
 
   const college=await prisma.college.findUnique({

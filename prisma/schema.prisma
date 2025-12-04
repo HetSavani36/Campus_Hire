@@ -57,6 +57,7 @@ model Company {
   email          String        @unique
   contactNo      String
   status         CompanyStatus @default(active)
+  collabNameShowUp Boolean @default(false)
 
   employees Employee[]
   jobs      Job[]

@@ -6,9 +6,9 @@ import { assignMentor, collabDecision, createMentor, jobApprovalDecision, resetP
 const router = Router();
 
 router.post("/create/mentor",verifyJWT,authorizeRole("collegeAdmin"),createMentor);
-router.post("/collab/request/:companyId/:result",verifyJWT,authorizeRole("collegeAdmin"),collabDecision);
-router.post("/reset-password",verifyJWT,authorizeRole("collegeAdmin"),resetPassword);
+router.post("/collab/request/:companyId",verifyJWT,authorizeRole("collegeAdmin"),collabDecision);
+router.post("/reset-password/:userId",verifyJWT,authorizeRole("collegeAdmin"),resetPassword);
 router.post("/job/:jobId/:result",verifyJWT,authorizeRole("collegeAdmin"),jobApprovalDecision);
-router.post("/job/assign-mentor",verifyJWT,authorizeRole("collegeAdmin"),assignMentor);
+router.post("/job/:jobId/assign-mentor",verifyJWT,authorizeRole("collegeAdmin"),assignMentor);
 
 export default router;
