@@ -4,6 +4,7 @@ import ApiResponse from "../utils/ApiResponse.js";
 import { PrismaClient } from "@prisma/client";
 import { generatePassword, hashPassword } from "../utils/password.util.js";
 import { sendEmail } from "../utils/email.js";
+import { compare } from "bcrypt";
 const prisma=new PrismaClient()
 
 const createMentor=asyncHandler(async(req,res)=>{
@@ -217,20 +218,21 @@ const assignMentor=asyncHandler(async(req,res)=>{
   })
   if(!college) throw new ApiError(404,"no such college found")
 
-  const mentor=await prisma.mentor.findUnique({
-    where:{id:mentorId},
-    select:{
-      id:true,
-      collegeId:true,
-      user:{
-        select:{
-          id:true,
-          name:true,
-          email:true
-        }
-      }
-    }
-  })
+  const mentor = await prisma.mentor.findUnique({
+    where: {
+      collegeId: college.id,
+      ...(search && {
+        user: {
+          is: {
+            OR: [
+              { name: { contains: search, mode: "insensitive" } },
+              { email: { contains: search, mode: "insensitive" } },
+            ],
+          },
+        },
+      }),
+    },
+  });
   if (!mentor) throw new ApiError(404, "no such mentor found");
   
   if (mentor.collegeId !== college.id) throw new ApiError(403, "this mentor does not belong to your college");
@@ -257,5 +259,235 @@ const assignMentor=asyncHandler(async(req,res)=>{
 })
 
 
+const getMentorsList=asyncHandler(async(req,res)=>{
+    const {search}=req.query
 
-export { createMentor, collabDecision,resetPassword, jobApprovalDecision, assignMentor};
+    const college=await prisma.college.findUnique({
+      where:{email:req.user.email}
+    })
+    if(!college) throw new ApiError(404,"no such college found")
+
+    let userQuery = {
+      ...(search && {
+            OR: [
+              { name: { contains: search, mode: "insensitive" } },
+              { email: { contains: search, mode: "insensitive" } },
+            ]
+      }),
+    };
+
+    const allMentors=await prisma.mentor.findMany({
+      where:{
+        collegeId:college.id,
+        user:userQuery
+      },
+      select:{
+        id:true,
+        user:{  
+            select:{
+              id:true,
+              name:true,
+              email:true
+            }
+        }
+      }
+    })
+
+    const onGoingJobs = await prisma.job.findMany({
+      where: {
+        collegeId: college.id,
+        dueDate: { gte: new Date() },
+        isApproved:true,
+        mentorId:{not:null}
+      },
+      select: {
+        mentor: {
+          select: {
+            id: true,
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    const allocatedMentors = onGoingJobs.map((job) => {
+      return {
+        id: job.mentor.id,
+        user: job.mentor.user,
+      };
+    });
+
+    const pastJobs = await prisma.job.findMany({
+      where: {
+        collegeId: college.id,
+        dueDate: { lt: new Date() },
+        isApproved: true,
+        mentorId: { not: null },
+      },
+      select: {
+        mentor: {
+          select: {
+            id: true,
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    const pastAllocatedMentors = pastJobs.map((job) => {
+      return {
+        id: job.mentor.id,
+        user: job.mentor.user,
+      };
+    });
+
+
+    res.json(
+      new ApiResponse(
+        200,
+        {
+          allMentors: allMentors,
+          allocatedMentors: allocatedMentors,
+          pastAllocatedMentors: pastAllocatedMentors,
+        },
+        "all mentors fetched successfully"
+      )
+    );
+})
+
+
+const mentorDetails=asyncHandler(async(req,res)=>{
+    const {mentorId}=req.params
+    if(!mentorId) throw new ApiError(403,"please provide mentor id")
+    
+    const college=await prisma.college.findUnique({
+      where:{email:req.user.email}
+    })
+    if(!college) throw new ApiError(404,"no such college found")
+    
+    const mentor=await prisma.mentor.findUnique({
+      where:{id:mentorId},
+      select:{
+        id:true,
+        collegeId:true,
+        user:{
+            select:{
+              id:true,
+              name:true,
+              email:true,
+            }
+        }
+      }
+    })  
+    if(!mentor) throw new ApiError(404,"no such employee found")
+
+    if(mentor.collegeId!==college.id) throw new ApiError(403,"you cant access mentor details of another college")
+
+    const allocatedJob=await prisma.job.findMany({
+        where:{
+          dueDate:{gte:new Date()},
+          collegeId:college.id,
+          isApproved:true,
+          mentorId:mentor.id
+        },
+        select:{
+          id:true,
+          title:true,
+          salary:true,
+          tenure:true,
+          address:true,
+          dueDate:true,
+          company:{
+            select:{
+              id:true,
+              name:true,
+              address:true,
+              email:true,
+              contactNo:true
+            }
+          }
+        }
+    })
+
+    res.json(
+      new ApiResponse(200,{mentor:mentor,allocatedJob:allocatedJob},"mentor detail")
+    )
+})
+
+
+const getAllCollabRequests=asyncHandler(async(req,res)=>{
+    const {status="pending"}=req.query
+    if(status && status!=="accepted" && status!=="rejected" && status!=="pending") status="pending"
+
+    const college = await prisma.college.findUnique({
+      where: { email: req.user.email },
+    });
+    if (!college) throw new ApiError(404, "no such college found");
+    
+    const collabRequests = await prisma.collab.findMany({
+      where: {
+        collegeId: college.id,
+        status: status,
+      },
+      select: {
+        id: true,
+        company: {
+          select: {
+            id: true,
+            name: true,
+            address: true,
+            email: true,
+            contactNo: true,
+            collabs:{
+              where:{status:"accepted"},
+              select:{id:true}
+            }
+          },
+        },
+      },
+    });
+
+    const formattedCollabRequests=collabRequests.map((collab)=>{
+        return {
+          id: collab.id,
+          company: {
+            id: collab.company.id,
+            name: collab.company.name,
+            address: collab.company.address,
+            email: collab.company.email,
+            contactNo: collab.company.contactNo,
+            collaberatedCount: collab.company.collabs.length
+          },
+        };
+    })
+
+
+    res.json(
+      new ApiResponse(200,formattedCollabRequests,"collab requests")
+    )
+
+})
+
+
+export {
+  createMentor,
+  collabDecision,
+  resetPassword,
+  jobApprovalDecision,
+  assignMentor,
+  getMentorsList,
+  mentorDetails,
+  getAllCollabRequests
+};
