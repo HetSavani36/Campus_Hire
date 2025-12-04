@@ -4,6 +4,7 @@ import ApiResponse from "../utils/ApiResponse.js";
 import { PrismaClient } from "@prisma/client";
 import { generatePassword, hashPassword } from "../utils/password.util.js";
 import { sendEmail } from "../utils/email.js";
+import { compare } from "bcrypt";
 const prisma=new PrismaClient()
 
 const createMentor=asyncHandler(async(req,res)=>{
@@ -426,6 +427,60 @@ const mentorDetails=asyncHandler(async(req,res)=>{
 })
 
 
+const getAllCollabRequests=asyncHandler(async(req,res)=>{
+    const {status="pending"}=req.query
+    if(status && status!=="accepted" && status!=="rejected" && status!=="pending") status="pending"
+
+    const college = await prisma.college.findUnique({
+      where: { email: req.user.email },
+    });
+    if (!college) throw new ApiError(404, "no such college found");
+    
+    const collabRequests = await prisma.collab.findMany({
+      where: {
+        collegeId: college.id,
+        status: status,
+      },
+      select: {
+        id: true,
+        company: {
+          select: {
+            id: true,
+            name: true,
+            address: true,
+            email: true,
+            contactNo: true,
+            collabs:{
+              where:{status:"accepted"},
+              select:{id:true}
+            }
+          },
+        },
+      },
+    });
+
+    const formattedCollabRequests=collabRequests.map((collab)=>{
+        return {
+          id: collab.id,
+          company: {
+            id: collab.company.id,
+            name: collab.company.name,
+            address: collab.company.address,
+            email: collab.company.email,
+            contactNo: collab.company.contactNo,
+            collaberatedCount: collab.company.collabs.length
+          },
+        };
+    })
+
+
+    res.json(
+      new ApiResponse(200,formattedCollabRequests,"collab requests")
+    )
+
+})
+
+
 export {
   createMentor,
   collabDecision,
@@ -434,4 +489,5 @@ export {
   assignMentor,
   getMentorsList,
   mentorDetails,
+  getAllCollabRequests
 };

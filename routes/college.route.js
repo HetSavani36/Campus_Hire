@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { verifyJWT } from "../middlewares/auth.middleware.js";
 import authorizeRole from "../middlewares/authorizableRole.js";
-import { assignMentor, collabDecision, createMentor, getMentorsList, jobApprovalDecision, mentorDetails, resetPassword } from "../controllers/college.controller.js";
+import { assignMentor, collabDecision, createMentor, getAllCollabRequests, getMentorsList, jobApprovalDecision, mentorDetails, resetPassword } from "../controllers/college.controller.js";
 
 const router = Router();
 
@@ -13,5 +13,6 @@ router.post("/job/:jobId/assign-mentor",verifyJWT,authorizeRole("collegeAdmin"),
 
 router.get("/mentors",verifyJWT,authorizeRole("collegeAdmin"),getMentorsList)
 router.get("/mentor/:mentorId",verifyJWT,authorizeRole("collegeAdmin"),mentorDetails)
+router.get("/collab/request",verifyJWT,authorizeRole("collegeAdmin"),getAllCollabRequests)
 
 export default router;
