@@ -217,20 +217,21 @@ const assignMentor=asyncHandler(async(req,res)=>{
   })
   if(!college) throw new ApiError(404,"no such college found")
 
-  const mentor=await prisma.mentor.findUnique({
-    where:{id:mentorId},
-    select:{
-      id:true,
-      collegeId:true,
-      user:{
-        select:{
-          id:true,
-          name:true,
-          email:true
-        }
-      }
-    }
-  })
+  const mentor = await prisma.mentor.findUnique({
+    where: {
+      collegeId: college.id,
+      ...(search && {
+        user: {
+          is: {
+            OR: [
+              { name: { contains: search, mode: "insensitive" } },
+              { email: { contains: search, mode: "insensitive" } },
+            ],
+          },
+        },
+      }),
+    },
+  });
   if (!mentor) throw new ApiError(404, "no such mentor found");
   
   if (mentor.collegeId !== college.id) throw new ApiError(403, "this mentor does not belong to your college");
@@ -257,5 +258,134 @@ const assignMentor=asyncHandler(async(req,res)=>{
 })
 
 
+const getMentorsList=asyncHandler(async(req,res)=>{
+    const {search}=req.query
 
-export { createMentor, collabDecision,resetPassword, jobApprovalDecision, assignMentor};
+    const college=await prisma.college.findUnique({
+      where:{email:req.user.email}
+    })
+    if(!college) throw new ApiError(404,"no such college found")
+
+    let userQuery = {
+      ...(search && {
+            OR: [
+              { name: { contains: search, mode: "insensitive" } },
+              { email: { contains: search, mode: "insensitive" } },
+            ]
+      }),
+    };
+
+    const allMentors=await prisma.mentor.findMany({
+      where:{
+        collegeId:college.id,
+        user:userQuery
+      },
+      select:{
+        id:true,
+        user:{  
+            select:{
+              id:true,
+              name:true,
+              email:true
+            }
+        }
+      }
+    })
+
+    const onGoingJobs = await prisma.job.findMany({
+      where: {
+        collegeId: college.id,
+        dueDate: { gte: new Date() },
+        isApproved:true,
+        mentorId:{not:null}
+      },
+      select: {
+        mentor: {
+          select: {
+            id: true,
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    const allocatedMentors = onGoingJobs.map((job) => {
+      return {
+        id: job.mentor.id,
+        user: job.mentor.user,
+      };
+    });
+
+    const pastJobs = await prisma.job.findMany({
+      where: {
+        collegeId: college.id,
+        dueDate: { lt: new Date() },
+        isApproved: true,
+        mentorId: { not: null },
+      },
+      select: {
+        mentor: {
+          select: {
+            id: true,
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    const pastAllocatedMentors = pastJobs.map((job) => {
+      return {
+        id: job.mentor.id,
+        user: job.mentor.user,
+      };
+    });
+
+
+    res.json(
+      new ApiResponse(
+        200,
+        {
+          allMentors: allMentors,
+          allocatedMentors: allocatedMentors,
+          pastAllocatedMentors: pastAllocatedMentors,
+        },
+        "all mentors fetched successfully"
+      )
+    );
+})
+
+
+const mentorDetails=asyncHandler(async(req,res)=>{
+    const {mentorId}=req.params
+    if(!mentorId) throw new ApiError(403,"please provide mentor id")
+    
+    const mentor=await prisma.mentor.findUnique({
+      where:{id:mentorId}
+    })  
+    if(!mentor) throw new ApiError(404,"no such employee found")
+    
+    
+})
+
+
+export {
+  createMentor,
+  collabDecision,
+  resetPassword,
+  jobApprovalDecision,
+  assignMentor,
+  getMentorsList,
+  mentorDetails,
+};
