@@ -492,6 +492,104 @@ const getCompanyDetails=asyncHandler(async(req,res)=>{
 })
 
 
+const getAllJobRequests=asyncHandler(async(req,res)=>{
+    let {isApproved="false"}=req.query
+    isApproved = isApproved === "true";
+
+    const college = await prisma.college.findUnique({
+      where: { email: req.user.email },
+    });
+    if (!college) throw new ApiError(404, "no such college found");
+
+    const dueDateFilter=isApproved? {lt:new Date()} :{gte:new Date()}
+
+    const jobRequests = await prisma.job.findMany({
+      where: {
+        collegeId: college.id,
+        isApproved: isApproved,
+        dueDate: dueDateFilter,
+        status: "active",
+      },
+      select: {
+        id: true,
+        title: true,
+        salary: true,
+        tenure: true,
+        dueDate: true,
+        collegeId: true,
+        companyId: true,
+        isApproved: true,
+        createdAt: true,
+        mentorId: true,
+      },
+    });
+
+    res.json(
+      new ApiResponse(200,jobRequests,"job requests")
+    )
+})
+
+const getJobDetails=asyncHandler(async(req,res)=>{
+    const {jobId}=req.params
+    if(!jobId) throw new ApiError(403,"please provide job id")
+
+    const college = await prisma.college.findUnique({
+      where: { email: req.user.email },
+    });
+    if (!college) throw new ApiError(404, "no such college found");
+
+    
+    const job=await prisma.job.findUnique({
+      where:{id:jobId},
+      select:{
+        id:true,
+        title:true,
+        salary:true,
+        tenure:true,
+        address:true,
+        status:true,
+        dueDate:true,
+        collegeId:true,
+        companyId:true,
+        isApproved:true,
+        createdAt:true,
+        mentorId:true,
+        mentor:{
+          select:{
+            id:true,
+            userId:true,
+            user:{
+              select:{
+                name:true,
+                email:true
+              }
+            }
+          }
+        },
+        company:{
+          select:{
+            name:true,
+            registrationNo:true,
+            address:true,
+            email:true,
+            contactNo:true,
+            status:true
+          }
+        },
+        jobSkills:{
+          include:{skill:true}
+        }
+      }
+    })
+    
+    if(!job) throw new ApiError(404,"no such job found")
+    if(job.collegeId!==college.id) throw new ApiError(403,"you cant see another college job details")
+    
+    res.json(
+      new ApiResponse(200,job,"job detail")
+    )
+  })
+  
 export {
   createMentor,
   collabDecision,
@@ -501,5 +599,7 @@ export {
   getMentorsList,
   mentorDetails,
   getAllCollabRequests,
-  getCompanyDetails
+  getCompanyDetails,
+  getAllJobRequests,
+  getJobDetails,
 };
