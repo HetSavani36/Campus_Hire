@@ -428,7 +428,7 @@ const mentorDetails=asyncHandler(async(req,res)=>{
 
 
 const getAllCollabRequests=asyncHandler(async(req,res)=>{
-    const {status="pending"}=req.query
+    let {status="pending"}=req.query
     if(status && status!=="accepted" && status!=="rejected" && status!=="pending") status="pending"
 
     const college = await prisma.college.findUnique({
@@ -447,37 +447,48 @@ const getAllCollabRequests=asyncHandler(async(req,res)=>{
           select: {
             id: true,
             name: true,
-            address: true,
-            email: true,
-            contactNo: true,
-            collabs:{
-              where:{status:"accepted"},
-              select:{id:true}
-            }
+            address: true
           },
         },
       },
     });
 
-    const formattedCollabRequests=collabRequests.map((collab)=>{
-        return {
-          id: collab.id,
-          company: {
-            id: collab.company.id,
-            name: collab.company.name,
-            address: collab.company.address,
-            email: collab.company.email,
-            contactNo: collab.company.contactNo,
-            collaberatedCount: collab.company.collabs.length
-          },
-        };
-    })
-
-
     res.json(
-      new ApiResponse(200,formattedCollabRequests,"collab requests")
+      new ApiResponse(200,collabRequests,"collab requests")
     )
+})
 
+
+const getCompanyDetails=asyncHandler(async(req,res)=>{
+    const {companyId}=req.params
+    if(!companyId) throw new ApiError(403,"please provide company id")
+      
+    const company = await prisma.company.findUnique({
+      where: { id: companyId },
+      select: {
+        id:true,
+        name: true,
+        address: true,
+        email: true,
+        contactNo: true,
+        collabs: {
+          where: { status: "accepted" },
+          select: { id: true },
+        },
+      },
+    });
+    if (!company) throw new ApiError(403, "no such company found");
+
+    const formattedCompany = {
+      id: company.id,
+      name: company.name,
+      address: company.address,
+      email: company.email,
+      contactNo: company.contactNo,
+      collaboratedCount: company.collabs.length,
+    };
+    
+    res.json(new ApiResponse(200, formattedCompany, "company details"));
 })
 
 
@@ -489,5 +500,6 @@ export {
   assignMentor,
   getMentorsList,
   mentorDetails,
-  getAllCollabRequests
+  getAllCollabRequests,
+  getCompanyDetails
 };
