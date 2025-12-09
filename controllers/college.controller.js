@@ -353,7 +353,9 @@ const getMentorsList=asyncHandler(async(req,res)=>{
       };
     });
 
-
+    const allocatedMentorIds = new Set(allocatedMentors.map((m) => m.id));
+    const availableMentors = allMentors.filter( (m) => !allocatedMentorIds.has(m.id) );
+    
     res.json(
       new ApiResponse(
         200,
@@ -361,6 +363,7 @@ const getMentorsList=asyncHandler(async(req,res)=>{
           allMentors: allMentors,
           allocatedMentors: allocatedMentors,
           pastAllocatedMentors: pastAllocatedMentors,
+          availableMentors: availableMentors,
         },
         "all mentors fetched successfully"
       )
