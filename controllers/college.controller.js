@@ -501,7 +501,7 @@ const getAllJobRequests=asyncHandler(async(req,res)=>{
     });
     if (!college) throw new ApiError(404, "no such college found");
 
-    const dueDateFilter=isApproved? {lt:new Date()} :{gte:new Date()}
+    const dueDateFilter=isApproved? {} :{gte:new Date()}
 
     const jobRequests = await prisma.job.findMany({
       where: {
@@ -550,14 +550,11 @@ const getJobDetails=asyncHandler(async(req,res)=>{
         status:true,
         dueDate:true,
         collegeId:true,
-        companyId:true,
         isApproved:true,
         createdAt:true,
-        mentorId:true,
         mentor:{
           select:{
             id:true,
-            userId:true,
             user:{
               select:{
                 name:true,
@@ -577,17 +574,42 @@ const getJobDetails=asyncHandler(async(req,res)=>{
           }
         },
         jobSkills:{
-          include:{skill:true}
+          select:{
+            skill:{
+              select:{
+                name:true
+              }
+            }
+          }
         }
       }
     })
     
     if(!job) throw new ApiError(404,"no such job found")
     if(job.collegeId!==college.id) throw new ApiError(403,"you cant see another college job details")
-    
-    res.json(
-      new ApiResponse(200,job,"job detail")
-    )
+
+    const formattedJob = {
+      id: job.id,
+      title: job.title,
+      salary: job.salary,
+      tenure: job.tenure,
+      status: job.status,
+      dueDate: job.dueDate,
+      isApproved: job.isApproved,
+      createdAt: job.createdAt,
+      mentor: job.mentor?{
+        id: job.mentor.id,
+        name: job.mentor.user.name,
+        email: job.mentor.user.email,
+      } : null,
+      company:job.company,
+      jobSkills:job.jobSkills.reduce((arr,skill)=>{
+            arr.push(skill.skill.name)
+            return arr
+      },[])
+    };
+
+    res.json(new ApiResponse(200, formattedJob, "job detail"));
   })
   
 export {
