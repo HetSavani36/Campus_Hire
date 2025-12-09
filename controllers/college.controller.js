@@ -493,15 +493,20 @@ const getCompanyDetails=asyncHandler(async(req,res)=>{
 
 
 const getAllJobRequests=asyncHandler(async(req,res)=>{
-    let {isApproved="false"}=req.query
+    let {isApproved="false",present}=req.query
     isApproved = isApproved === "true";
+    present = present === "true";
 
     const college = await prisma.college.findUnique({
       where: { email: req.user.email },
     });
     if (!college) throw new ApiError(404, "no such college found");
 
-    const dueDateFilter=isApproved? {} :{gte:new Date()}
+    const dueDateFilter = isApproved
+      ? present
+        ? { gte: new Date() }
+        : {}
+      : { gte: new Date() };
 
     const jobRequests = await prisma.job.findMany({
       where: {
