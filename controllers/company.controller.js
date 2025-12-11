@@ -306,6 +306,17 @@ const getEmployeesList=asyncHandler(async(req,res)=>{
     const employees= await prisma.employee.findMany({
       where:{
         companyId:company.id,
+        ...(search && {
+          user:{
+            is:{
+              OR:[
+                {name:{contains:search , mode:"insensitive"} },
+                {email: {contains:search , mode:"insensitive"} },
+                {id: {contains:search , mode:"insensitive"} },
+              ]
+            }
+          }
+        })
       },
       select:{
         id:true,
@@ -320,27 +331,14 @@ const getEmployeesList=asyncHandler(async(req,res)=>{
       }
     })
 
-    const filteredEmployees=[]
-    if(search){
-      employees.forEach(employee => {
-          if (
-            employee.user.email.includes(search) ||
-            employee.user.name.includes(search) ||
-            employee.user.id.includes(search)
-          )
-            filteredEmployees.push(employee);
-      });
-    }
-
     res.json(
-      new ApiResponse(
-        200,
-        search ? filteredEmployees : employees,
-        "employees list"
-      )
+      new ApiResponse(200,employees,"employees list")
     );
 })
 
+const getEmployeeDetail=asyncHandler(async(req,res)=>{
+    // const 
+})
 
 export {
   createEmployee,
