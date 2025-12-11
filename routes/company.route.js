@@ -9,6 +9,8 @@ import {
   resetPassword,
   makeStudentApplicationDecision,
   getEmployeesList,
+  getEmployeeDetail,
+  getAllColleges,
 } from "../controllers/company.controller.js";
 
 const router = Router();
@@ -23,6 +25,8 @@ router.post("/add/skill",verifyJWT,authorizeRole("companyAdmin","employee"),addS
 router.post("/application/:applicationId",verifyJWT,authorizeRole("employee"),makeStudentApplicationDecision);
 
 router.get("/employees",verifyJWT,authorizeRole("companyAdmin"),getEmployeesList);
+router.get("/employee/:employeeId",verifyJWT,authorizeRole("companyAdmin"),getEmployeeDetail);
+router.get("/college",verifyJWT,authorizeRole("companyAdmin"),getAllColleges);
 
 
 export default router
