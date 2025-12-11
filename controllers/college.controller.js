@@ -353,7 +353,9 @@ const getMentorsList=asyncHandler(async(req,res)=>{
       };
     });
 
-
+    const allocatedMentorIds = new Set(allocatedMentors.map((m) => m.id));
+    const availableMentors = allMentors.filter( (m) => !allocatedMentorIds.has(m.id) );
+    
     res.json(
       new ApiResponse(
         200,
@@ -361,6 +363,7 @@ const getMentorsList=asyncHandler(async(req,res)=>{
           allMentors: allMentors,
           allocatedMentors: allocatedMentors,
           pastAllocatedMentors: pastAllocatedMentors,
+          availableMentors: availableMentors,
         },
         "all mentors fetched successfully"
       )
@@ -428,7 +431,7 @@ const mentorDetails=asyncHandler(async(req,res)=>{
 
 
 const getAllCollabRequests=asyncHandler(async(req,res)=>{
-    const {status="pending"}=req.query
+    let {status="pending"}=req.query
     if(status && status!=="accepted" && status!=="rejected" && status!=="pending") status="pending"
 
     const college = await prisma.college.findUnique({
@@ -447,40 +450,176 @@ const getAllCollabRequests=asyncHandler(async(req,res)=>{
           select: {
             id: true,
             name: true,
-            address: true,
-            email: true,
-            contactNo: true,
-            collabs:{
-              where:{status:"accepted"},
-              select:{id:true}
-            }
+            address: true
           },
         },
       },
     });
 
-    const formattedCollabRequests=collabRequests.map((collab)=>{
-        return {
-          id: collab.id,
-          company: {
-            id: collab.company.id,
-            name: collab.company.name,
-            address: collab.company.address,
-            email: collab.company.email,
-            contactNo: collab.company.contactNo,
-            collaberatedCount: collab.company.collabs.length
-          },
-        };
-    })
-
-
     res.json(
-      new ApiResponse(200,formattedCollabRequests,"collab requests")
+      new ApiResponse(200,collabRequests,"collab requests")
     )
-
 })
 
 
+const getCompanyDetails=asyncHandler(async(req,res)=>{
+    const {companyId}=req.params
+    if(!companyId) throw new ApiError(403,"please provide company id")
+      
+    const company = await prisma.company.findUnique({
+      where: { id: companyId },
+      select: {
+        id:true,
+        name: true,
+        address: true,
+        email: true,
+        contactNo: true,
+        collabs: {
+          where: { status: "accepted" },
+          select: { id: true },
+        },
+      },
+    });
+    if (!company) throw new ApiError(403, "no such company found");
+
+    const formattedCompany = {
+      id: company.id,
+      name: company.name,
+      address: company.address,
+      email: company.email,
+      contactNo: company.contactNo,
+      collaboratedCount: company.collabs.length,
+    };
+    
+    res.json(new ApiResponse(200, formattedCompany, "company details"));
+})
+
+
+const getAllJobRequests=asyncHandler(async(req,res)=>{
+    let {isApproved="false",present}=req.query
+    isApproved = isApproved === "true";
+    present = present === "true";
+
+    const college = await prisma.college.findUnique({
+      where: { email: req.user.email },
+    });
+    if (!college) throw new ApiError(404, "no such college found");
+
+    const dueDateFilter = isApproved
+      ? present
+        ? { gte: new Date() }
+        : {}
+      : { gte: new Date() };
+
+    const jobRequests = await prisma.job.findMany({
+      where: {
+        collegeId: college.id,
+        isApproved: isApproved,
+        dueDate: dueDateFilter,
+        status: "active",
+      },
+      select: {
+        id: true,
+        title: true,
+        salary: true,
+        tenure: true,
+        dueDate: true,
+        collegeId: true,
+        companyId: true,
+        isApproved: true,
+        createdAt: true,
+        mentorId: true,
+      },
+    });
+
+    res.json(
+      new ApiResponse(200,jobRequests,"job requests")
+    )
+})
+
+const getJobDetails=asyncHandler(async(req,res)=>{
+    const {jobId}=req.params
+    if(!jobId) throw new ApiError(403,"please provide job id")
+
+    const college = await prisma.college.findUnique({
+      where: { email: req.user.email },
+    });
+    if (!college) throw new ApiError(404, "no such college found");
+
+    
+    const job=await prisma.job.findUnique({
+      where:{id:jobId},
+      select:{
+        id:true,
+        title:true,
+        salary:true,
+        tenure:true,
+        address:true,
+        status:true,
+        dueDate:true,
+        collegeId:true,
+        isApproved:true,
+        createdAt:true,
+        mentor:{
+          select:{
+            id:true,
+            user:{
+              select:{
+                name:true,
+                email:true
+              }
+            }
+          }
+        },
+        company:{
+          select:{
+            name:true,
+            registrationNo:true,
+            address:true,
+            email:true,
+            contactNo:true,
+            status:true
+          }
+        },
+        jobSkills:{
+          select:{
+            skill:{
+              select:{
+                name:true
+              }
+            }
+          }
+        }
+      }
+    })
+    
+    if(!job) throw new ApiError(404,"no such job found")
+    if(job.collegeId!==college.id) throw new ApiError(403,"you cant see another college job details")
+
+    const formattedJob = {
+      id: job.id,
+      title: job.title,
+      salary: job.salary,
+      tenure: job.tenure,
+      status: job.status,
+      dueDate: job.dueDate,
+      isApproved: job.isApproved,
+      createdAt: job.createdAt,
+      mentor: job.mentor?{
+        id: job.mentor.id,
+        name: job.mentor.user.name,
+        email: job.mentor.user.email,
+      } : null,
+      company:job.company,
+      jobSkills:job.jobSkills.reduce((arr,skill)=>{
+            arr.push(skill.skill.name)
+            return arr
+      },[])
+    };
+
+    res.json(new ApiResponse(200, formattedJob, "job detail"));
+  })
+  
 export {
   createMentor,
   collabDecision,
@@ -489,5 +628,8 @@ export {
   assignMentor,
   getMentorsList,
   mentorDetails,
-  getAllCollabRequests
+  getAllCollabRequests,
+  getCompanyDetails,
+  getAllJobRequests,
+  getJobDetails,
 };

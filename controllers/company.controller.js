@@ -293,6 +293,55 @@ const makeStudentApplicationDecision=asyncHandler(async(req,res)=>{
     )
 })
 
+
+const getEmployeesList=asyncHandler(async(req,res)=>{
+
+    const {search}=req.query
+
+    const company=await prisma.company.findUnique({
+      where:{email:req.user.email}
+    })
+    if(!company) throw new ApiError(404,"no such company found")
+
+    const employees= await prisma.employee.findMany({
+      where:{
+        companyId:company.id,
+      },
+      select:{
+        id:true,
+        user:{
+          select:{
+            id:true,
+            name:true,
+            email:true,
+            createdAt:true,
+          }
+        }
+      }
+    })
+
+    const filteredEmployees=[]
+    if(search){
+      employees.forEach(employee => {
+          if (
+            employee.user.email.includes(search) ||
+            employee.user.name.includes(search) ||
+            employee.user.id.includes(search)
+          )
+            filteredEmployees.push(employee);
+      });
+    }
+
+    res.json(
+      new ApiResponse(
+        200,
+        search ? filteredEmployees : employees,
+        "employees list"
+      )
+    );
+})
+
+
 export {
   createEmployee,
   collabWithCollege,
@@ -300,4 +349,5 @@ export {
   postJob,
   addSkill,
   makeStudentApplicationDecision,
+  getEmployeesList,
 };
