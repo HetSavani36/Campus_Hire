@@ -337,7 +337,55 @@ const getEmployeesList=asyncHandler(async(req,res)=>{
 })
 
 const getEmployeeDetail=asyncHandler(async(req,res)=>{
-    // const 
+    const { employeeId } = req.params;
+
+    const company = await prisma.company.findUnique({
+      where: { email: req.user.email },
+    });
+    if (!company) throw new ApiError(404, "no such company found");
+
+    const employee = await prisma.employee.findUnique({
+      where: { id: employeeId },
+      select: {
+        id: true,
+        companyId:true,
+        user: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            createdAt: true,
+          },
+        },
+        interviews:{
+          select:{
+            id:true,
+            date:true,
+            time:true,
+            address:true,
+            selected:true,
+            student:{
+              select:{
+                branch:true,
+                college:{
+                  select:{
+                    name:true,
+                    email:true,
+                    address:true
+                  }
+                },
+                year:true,
+                rollNo:true
+              }
+            },
+          }
+        },
+      },
+    });
+    if (!employee) throw new ApiError(404, "no such employee found");
+    if (employee.companyId!==company.id) throw new ApiError(403, "you cant see employee of another company");
+    
+    res.json(new ApiResponse(200, employee,"employee details"));
 })
 
 export {
@@ -348,4 +396,5 @@ export {
   addSkill,
   makeStudentApplicationDecision,
   getEmployeesList,
+  getEmployeeDetail
 };
