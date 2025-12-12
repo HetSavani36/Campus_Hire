@@ -527,15 +527,43 @@ const getAllColleges=asyncHandler(async(req,res)=>{  //acceprted,rejected,pendin
     )
 })
 
-
-const getAllJobs = asyncHandler(async(req,res)=>{
+const getAllJobs = asyncHandler(async (req, res) => {
     const company = await prisma.company.findUnique({
       where: { email: req.user.email },
     });
     if (!company) throw new ApiError(404, "no such company found");
 
+    let { filter = "all" } = req.query;
 
-})
+    const whereClause = {
+      companyId: company.id,
+    };
+
+    // ---- TIME-BASED FILTERS ----
+    if (filter === "current") whereClause.dueDate = { gte: new Date() };
+    if (filter === "past") whereClause.dueDate = { lt: new Date() };
+    // ---- APPROVAL-BASED FILTERS ----
+    if (filter === "accepted") whereClause.isApproved = true;
+    if (filter === "pending") whereClause.isApproved = false;
+
+    const jobs = await prisma.job.findMany({
+      where: whereClause,
+      select:{
+        id:true,
+        title:true,
+        salary:true,
+        tenure:true,
+        status:true,
+        address:true,
+        dueDate:true,
+        isApproved:true,
+        createdAt:true
+      }
+    });
+
+    res.json(new ApiResponse(200, jobs, "all jobs"));
+});
+
 
 const getAllSkills=asyncHandler(async(req,res)=>{
     const {search,sortBy="name",sortOrder="desc"}=req.query
@@ -565,4 +593,5 @@ export {
   getEmployeeDetail,
   getAllColleges,
   getAllSkills,
+  getAllJobs
 };
