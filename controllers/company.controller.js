@@ -528,6 +528,32 @@ const getAllColleges=asyncHandler(async(req,res)=>{  //acceprted,rejected,pendin
 })
 
 
+const getAllJobs = asyncHandler(async(req,res)=>{
+    const company = await prisma.company.findUnique({
+      where: { email: req.user.email },
+    });
+    if (!company) throw new ApiError(404, "no such company found");
+
+
+})
+
+const getAllSkills=asyncHandler(async(req,res)=>{
+    const {search,sortBy="name",sortOrder="desc"}=req.query
+    const skills=await prisma.skill.findMany({
+      where:{
+        name:{contains:search,mode:"insensitive"},
+      },
+      orderBy:{
+        [sortBy]:sortOrder
+      }
+    })
+
+    res.json(
+      new ApiResponse(200,skills,"all skills")
+    )
+  })
+
+
 export {
   createEmployee,
   collabWithCollege,
@@ -538,4 +564,5 @@ export {
   getEmployeesList,
   getEmployeeDetail,
   getAllColleges,
+  getAllSkills,
 };
