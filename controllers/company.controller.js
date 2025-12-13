@@ -632,8 +632,81 @@ const getAllSkills=asyncHandler(async(req,res)=>{
     res.json(
       new ApiResponse(200,skills,"all skills")
     )
-  })
+})
 
+
+const getJobDetails=asyncHandler(async(req,res)=>{
+    const {jobId}=req.params
+    if(!jobId) throw new ApiError(403,"please provide job id")
+
+    const company = await prisma.company.findUnique({
+      where: { email: req.user.email },
+    });
+    if (!company) throw new ApiError(404, "no such company found");
+
+    const job = await prisma.job.findUnique({
+      where: { id:jobId },
+      select:{
+        id:true,
+        title:true,
+        salary:true,
+        tenure:true,
+        address:true,
+        status:true,
+        dueDate:true,
+        companyId:true,
+        isApproved:true,
+        createdAt:true,
+        college:{
+          select:{
+              id:true,
+              name:true,
+              address:true,
+              email:true,
+              phone:true
+          } 
+        },
+        mentor:{
+          select:{
+              id:true,
+              user:{
+                select:{
+                  id:true,
+                  name:true,
+                  email:true
+                }
+              }
+          }
+        },
+        applications:{
+            select:{
+              id:true,
+              studentId:true,
+              status:true
+            }
+        }
+      }
+    });
+    if (!job) throw new ApiError(404, "no such job found");
+    if(job.companyId!==company.id) throw new ApiError(403,"job not belongs to your company")
+
+    const shortlistedCandidates = job.applications.filter((application) => application.status === "shortlisted");
+    const rejectedCandidates = job.applications.filter((application) => application.status === "rejected");
+    const hiredCandidates = job.applications.filter((application) => application.status === "hired");
+    const pendingCandidates = job.applications.filter((application) => application.status === "pending");
+
+    job.applications = {
+      shortlistedCandidates: shortlistedCandidates,
+      rejectedCandidates: rejectedCandidates,
+      hiredCandidates: hiredCandidates,
+      pendingCandidates: pendingCandidates,
+    };
+    
+    res.json(
+      new ApiResponse(200,job,"job details")
+    )
+
+})
 
 export {
   createEmployee,
@@ -646,5 +719,6 @@ export {
   getEmployeeDetail,
   getAllColleges,
   getAllSkills,
-  getAllJobs
+  getAllJobs,
+  getJobDetails,
 };
