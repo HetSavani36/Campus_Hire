@@ -586,7 +586,7 @@ const getAllJobs = asyncHandler(async (req, res) => {
     });
     if (!company) throw new ApiError(404, "no such company found");
 
-    let { filter = "all" } = req.query;
+    let { filter = "current" } = req.query;
 
     const whereClause = {
       companyId: company.id,
