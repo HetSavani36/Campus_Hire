@@ -701,9 +701,22 @@ const getJobDetails=asyncHandler(async(req,res)=>{
       hiredCandidates: hiredCandidates,
       pendingCandidates: pendingCandidates,
     };
+
+    const applicationCount = {
+      shortlisted: job.applications.shortlistedCandidates.length,
+      rejected: job.applications.rejectedCandidates.length,
+      hired: job.applications.hiredCandidates.length,
+      pending: job.applications.pendingCandidates.length,
+    };
+
+    applicationCount.total =
+      applicationCount.shortlisted +
+      applicationCount.rejected +
+      applicationCount.hired+
+      applicationCount.pending;
     
     res.json(
-      new ApiResponse(200,job,"job details")
+      new ApiResponse(200,{...job,applicationCount},"job details")
     )
 
 })
