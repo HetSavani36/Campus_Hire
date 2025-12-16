@@ -286,4 +286,110 @@ const apply=asyncHandler(async(req,res)=>{
     )
 })
 
-export { uploadBulkStudents, createProfile, editProfile, addSkill , apply};
+const getJobsList=asyncHandler(async(req,res)=>{
+    const {filter="current"}=req.query
+
+    const student=await prisma.student.findUnique({
+        where:{userId:req.user.id},
+        select:{
+            id:true,
+            userId:true,
+            collegeId:true
+        }
+    })
+    
+
+    let whereClause={
+        status: "active",
+        collegeId: student.collegeId,
+        isApproved: true,
+        mentorId: { not: null },
+    }
+    
+
+    if(filter==="current") whereClause.dueDate={gte: new Date() }
+    if(filter==="past") whereClause.dueDate={lt: new Date() }
+    
+    
+    let jobs = await prisma.job.findMany({
+        where: whereClause,
+        select:{
+            id:true
+        }
+    });
+    
+    jobs=jobs.map((job)=>job.id)
+
+    let newWhereClause={
+        studentId:student.id,
+        jobId:{in:jobs},
+    }
+    
+    if(filter==="pending") newWhereClause.status="pending"
+    if(filter==="rejected") newWhereClause.status = "rejected"
+    if(filter==="shortlisted") newWhereClause.status = "shortlisted";
+    if(filter==="hired") newWhereClause.status = "hired"
+    if (filter === "mentor_approved") newWhereClause.mentorApproval = "approved";
+    if (filter === "mentor_pending") newWhereClause.mentorApproval = "pending";
+    if (filter === "mentor_rejected") newWhereClause.mentorApproval = "rejected";
+
+
+    let updatedJobs=await prisma.application.findMany({
+        where:newWhereClause,
+        select:{
+            status:true,
+            mentorApproval:true,
+            job:{
+                select:{
+                    title:true,
+                    id:true,
+                    salary:true,
+                    dueDate:true
+                }
+            }
+        }
+    })
+
+    updatedJobs = updatedJobs.map((job) => ({
+      ...job,
+      title: job.job.title,
+      id: job.job.id,
+      salary: job.job.salary,
+      dueDate: job.job.dueDate,
+      job:undefined
+    }));
+
+    const updatedJobsIds = updatedJobs.map((job) => job.id);
+
+    let unappliedJobs = await prisma.job.findMany({
+      where: {
+        id: { notIn: updatedJobsIds },
+      },
+      select: {
+        title: true,
+        id: true,
+        salary: true,
+        dueDate: true,
+      },
+    });
+    
+    unappliedJobs=unappliedJobs.map((job)=>({
+        ...job,
+        status: "not applied",
+        mentorApproval: null,
+    }))
+
+    const allJobs=[...updatedJobs,...unappliedJobs]
+
+    res.json(new ApiResponse(200, allJobs, "student jobs"));
+})
+
+
+export {
+  uploadBulkStudents,
+  createProfile,
+  editProfile,
+  addSkill,
+  apply,
+  getJobsList,
+};

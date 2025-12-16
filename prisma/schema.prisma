@@ -160,7 +160,7 @@ model Job {
   title      String
   salary     Int?
   tenure     String?
-  address    String?
+  address    String?  
   status     JobStatus @default(active)
   dueDate    DateTime?
   collegeId  String
