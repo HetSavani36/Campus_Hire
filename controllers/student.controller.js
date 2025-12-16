@@ -385,6 +385,64 @@ const getJobsList=asyncHandler(async(req,res)=>{
 })
 
 
+const getJobDetail = asyncHandler(async(req,res)=>{
+    const {jobId}=req.params
+    if(!jobId) throw new ApiError(403,"please provide job id")
+        
+    const student=await prisma.student.findUnique({
+        where:{userId:req.user.id}
+    })
+    if(!student) throw new ApiError(404,"no such student found")
+    
+    const job=await prisma.job.findUnique({
+        where:{id:jobId},
+        select:{
+            id:true,
+            title:true,
+            salary:true,
+            tenure:true,
+            address:true,
+            dueDate:true,
+            collegeId:true,
+            createdAt:true,
+            mentorId:true,
+            status:true,
+            company:{
+                select:{
+                    name:true,
+                    address:true,
+                    email:true,
+                    contactNo:true
+                }
+            },
+            mentor:{
+                select:{
+                    user:{
+                        select:{
+                            name:true,
+                            email:true
+                        }
+                    }
+                }
+            }
+        }
+    })
+    if(!job) throw new ApiError(404,"no such job found")
+    if(job.collegeId!==student.collegeId) throw new ApiError(403,"you cant apply to another college job")
+    if(job.status!=="active") throw new ApiError(403,"the job is currently not active")
+    if(job.isApproved===false) throw new ApiError(403,"the job is not approved by your college yet")
+    if(!job.mentorId) throw new ApiError(403,"your college has not yet assigned a mentor")
+    
+    job.mentor = {
+        name: job.mentor.user.name,
+        email: job.mentor.user.email,
+    };
+
+    res.json(
+        new ApiResponse(200,job,"job details")
+    )
+})
+
 export {
   uploadBulkStudents,
   createProfile,
@@ -392,4 +450,5 @@ export {
   addSkill,
   apply,
   getJobsList,
+  getJobDetail
 };

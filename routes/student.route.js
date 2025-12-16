@@ -3,7 +3,7 @@ import { verifyJWT } from "../middlewares/auth.middleware.js";
 import authorizeRole from "../middlewares/authorizableRole.js";
 import hasCompletedProfile from "../middlewares/hasCompleteProfile.middleware.js";
 import upload from "../middlewares/multer.middleware.js"
-import { addSkill, apply, createProfile, editProfile, getJobsList, uploadBulkStudents } from "../controllers/student.controller.js";
+import { addSkill, apply, createProfile, editProfile, getJobDetail, getJobsList, uploadBulkStudents } from "../controllers/student.controller.js";
 
 const router = Router();
 
@@ -13,5 +13,6 @@ router.put("/profile", verifyJWT, authorizeRole("student"),hasCompletedProfile,e
 router.post("/add/skill", verifyJWT, authorizeRole("student"),hasCompletedProfile,addSkill);
 router.post("/apply/:jobId", verifyJWT, authorizeRole("student"),hasCompletedProfile,apply);
 router.get("/jobs", verifyJWT, authorizeRole("student"),hasCompletedProfile,getJobsList);
+router.get("/job/:jobId", verifyJWT, authorizeRole("student"),hasCompletedProfile,getJobDetail);
 
 export default router;
