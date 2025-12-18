@@ -66,8 +66,8 @@ const registerCollege=asyncHandler(async(req,res)=>{
 	collegeAdmin.refreshToken=undefined
 
 	res
-    .cookie("accessToken", accessToken, options)
-    .cookie("refreshToken", refreshToken, options)
+    // .cookie("accessToken", accessToken, options)
+    // .cookie("refreshToken", refreshToken, options)
     .json(
       new ApiResponse(
         201,
@@ -135,8 +135,8 @@ const registerCompany=asyncHandler(async(req,res)=>{
 	companyAdmin.refreshToken = undefined;
 
 	res
-    .cookie("accessToken", accessToken, options)
-    .cookie("refreshToken", refreshToken, options)
+    // .cookie("accessToken", accessToken, options)
+    // .cookie("refreshToken", refreshToken, options)
     .json(
       new ApiResponse(
         201,
