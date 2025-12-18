@@ -181,87 +181,140 @@ const addSkill=asyncHandler(async(req,res)=>{
 })
 
 
-const postJob=asyncHandler(async(req,res)=>{
-  const {title,salary,tenure,address,dueDate,collegeId}=req.body
-  let {skills}=req.body
+const postJob = asyncHandler(async (req, res) => {
+  const { title, salary, tenure, address, dueDate, collegeIds } = req.body;
+  let { skills } = req.body;
 
-  if(!title || !collegeId || !skills || skills.length === 0) throw new ApiError(403,"please provide all details")
-  skills=[...new Set(skills)]
+  if (!title || !Array.isArray(collegeIds) || collegeIds.length === 0)
+    throw new ApiError(403, "please provide title and at least one college");
 
-  const company=await prisma.company.findUnique({
-    where:{email:req.user.email}
-  })
-  if(!company) throw new ApiError(404,"no such company found")
+  if (!skills || skills.length === 0)
+    throw new ApiError(403, "please provide at least one skill");
 
-  const college = await prisma.college.findUnique({
-    where: { id:collegeId },
+  skills = [...new Set(skills)];
+
+  const company = await prisma.company.findUnique({
+    where: { email: req.user.email },
   });
-  if (!college) throw new ApiError(404, "no such college found");
+  if (!company) throw new ApiError(404, "no such company found");
 
-  const skillsObtained=await prisma.skill.findMany({
-      where:{
-        id:{
-          in:skills
-        }
-      }
-  })
-  if(skillsObtained.length!==skills.length) throw new ApiError(403,"please provide valid skill ids")
+  // Validate colleges
+  const colleges = await prisma.college.findMany({
+    where: { id: { in: collegeIds } },
+    select: { id: true },
+  });
 
-  const collab=await prisma.collab.findUnique({
-    where:{
-      collegeId_companyId:{
-        collegeId:collegeId,
-        companyId:company.id
-      }
-    }
-  })
-  if(!collab) throw new ApiError(403,"you have not collaberated with this college")
-  if(collab.status==="rejected") throw new ApiError(403,"you have not collaberated with this college")
-  if(collab.status==="pending") throw new ApiError(403,"your collaberation request is pending.wait till it is accepted")
+  if (colleges.length !== collegeIds.length)
+    throw new ApiError(403, "one or more college IDs are invalid");
 
-  let date=new Date()
-  date.setDate(date.getDate()+10)
-  if(dueDate) date=new Date(dueDate)
+  // Validate skills
+  const skillsObtained = await prisma.skill.findMany({
+    where: { id: { in: skills } },
+  });
 
-  const exists = await prisma.job.findFirst({
+  if (skillsObtained.length !== skills.length)
+    throw new ApiError(403, "one or more skill IDs are invalid");
+
+  // Validate collaborations
+  const collabs = await prisma.collab.findMany({
     where: {
-      title: title,
-      salary: salary ? Number(salary) : null,
-      tenure:tenure,
-      dueDate:dueDate,
-      companyId:company.id,
-      collegeId:collegeId
+      companyId: company.id,
+      collegeId: { in: collegeIds },
     },
   });
-  if(exists && !exists.isApproved) throw new ApiError(403,"this job already exists and is under approval")
-  if(exists && exists.isApproved) throw new ApiError(403,"this job is already approved")
-  
-  const job=await prisma.job.create({
-    data:{
-      title:title,
-      salary:salary?Number(salary):null,
-      tenure:tenure??null,
-      address:address??company.address,
-      dueDate:date,
-      collegeId:collegeId,
-      companyId:company.id 
+
+  const collabMap = new Map();
+  collabs.forEach((c) => collabMap.set(c.collegeId, c));
+
+  for (let collegeId of collegeIds) {
+    const c = collabMap.get(collegeId);
+
+    if (!c)
+      throw new ApiError(
+        403,
+        `You have not collaborated with college ${collegeId}`
+      );
+    if (c.status === "rejected")
+      throw new ApiError(
+        403,
+        `Your collaboration with college ${collegeId} is rejected`
+      );
+    if (c.status === "pending")
+      throw new ApiError(
+        403,
+        `Your collaboration request with ${collegeId} is pending`
+      );
+  }
+
+  // Final due date
+  let finalDueDate = new Date();
+  finalDueDate.setDate(finalDueDate.getDate() + 10);
+  if (dueDate) finalDueDate = new Date(dueDate);
+
+  // --------------------------
+  // 🔥 RUN EVERYTHING IN A TRANSACTION
+  // --------------------------
+  const createdJobs = await prisma.$transaction(async (tx) => {
+    const jobResults = [];
+
+    for (let collegeId of collegeIds) {
+      // 1. Check duplicates inside transaction
+      const exists = await tx.job.findFirst({
+        where: {
+          title,
+          salary: salary ? Number(salary) : null,
+          tenure,
+          dueDate: dueDate ? new Date(dueDate) : null,
+          companyId: company.id,
+          collegeId,
+        },
+      });
+
+      if (exists && !exists.isApproved)
+        throw new ApiError(
+          403,
+          `Job for college ${collegeId} already exists and is under approval`
+        );
+
+      if (exists && exists.isApproved)
+        throw new ApiError(
+          403,
+          `Job for college ${collegeId} is already approved`
+        );
+
+      // 2. Create job
+      const job = await tx.job.create({
+        data: {
+          title,
+          salary: salary ? Number(salary) : null,
+          tenure: tenure ?? null,
+          address: address ?? company.address,
+          dueDate: finalDueDate,
+          collegeId,
+          companyId: company.id,
+        },
+      });
+
+      // 3. Create job skills
+      const skillData = skills.map((skillId) => ({
+        jobId: job.id,
+        skillId,
+      }));
+
+      await tx.jobSkill.createMany({
+        data: skillData,
+        skipDuplicates: true,
+      });
+
+      jobResults.push(job);
     }
-  })
 
-  const skillData=skills.map((skillId)=>({
-      jobId:job.id,
-      skillId:skillId
-  }))
+    return jobResults;
+  });
 
-  await prisma.jobSkill.createMany({
-    data:skillData,
-    skipDuplicates:true
-  })
+  res.json(new ApiResponse(200, createdJobs, "Jobs posted successfully"));
+});
 
-  res.json(
-    new ApiResponse(200,job,"new job posted")
-  )
-})
 
 
 const makeStudentApplicationDecision=asyncHandler(async(req,res)=>{
@@ -527,15 +580,43 @@ const getAllColleges=asyncHandler(async(req,res)=>{  //acceprted,rejected,pendin
     )
 })
 
-
-const getAllJobs = asyncHandler(async(req,res)=>{
+const getAllJobs = asyncHandler(async (req, res) => {
     const company = await prisma.company.findUnique({
       where: { email: req.user.email },
     });
     if (!company) throw new ApiError(404, "no such company found");
 
+    let { filter = "current" } = req.query;
 
-})
+    const whereClause = {
+      companyId: company.id,
+    };
+
+    // ---- TIME-BASED FILTERS ----
+    if (filter === "current") whereClause.dueDate = { gte: new Date() };
+    if (filter === "past") whereClause.dueDate = { lt: new Date() };
+    // ---- APPROVAL-BASED FILTERS ----
+    if (filter === "accepted") whereClause.isApproved = true;
+    if (filter === "pending") whereClause.isApproved = false;
+
+    const jobs = await prisma.job.findMany({
+      where: whereClause,
+      select:{
+        id:true,
+        title:true,
+        salary:true,
+        tenure:true,
+        status:true,
+        address:true,
+        dueDate:true,
+        isApproved:true,
+        createdAt:true
+      }
+    });
+
+    res.json(new ApiResponse(200, jobs, "all jobs"));
+});
+
 
 const getAllSkills=asyncHandler(async(req,res)=>{
     const {search,sortBy="name",sortOrder="desc"}=req.query
@@ -551,8 +632,94 @@ const getAllSkills=asyncHandler(async(req,res)=>{
     res.json(
       new ApiResponse(200,skills,"all skills")
     )
-  })
+})
 
+
+const getJobDetails=asyncHandler(async(req,res)=>{
+    const {jobId}=req.params
+    if(!jobId) throw new ApiError(403,"please provide job id")
+
+    const company = await prisma.company.findUnique({
+      where: { email: req.user.email },
+    });
+    if (!company) throw new ApiError(404, "no such company found");
+
+    const job = await prisma.job.findUnique({
+      where: { id:jobId },
+      select:{
+        id:true,
+        title:true,
+        salary:true,
+        tenure:true,
+        address:true,
+        status:true,
+        dueDate:true,
+        companyId:true,
+        isApproved:true,
+        createdAt:true,
+        college:{
+          select:{
+              id:true,
+              name:true,
+              address:true,
+              email:true,
+              phone:true
+          } 
+        },
+        mentor:{
+          select:{
+              id:true,
+              user:{
+                select:{
+                  id:true,
+                  name:true,
+                  email:true
+                }
+              }
+          }
+        },
+        applications:{
+            select:{
+              id:true,
+              studentId:true,
+              status:true
+            }
+        }
+      }
+    });
+    if (!job) throw new ApiError(404, "no such job found");
+    if(job.companyId!==company.id) throw new ApiError(403,"job not belongs to your company")
+
+    const shortlistedCandidates = job.applications.filter((application) => application.status === "shortlisted");
+    const rejectedCandidates = job.applications.filter((application) => application.status === "rejected");
+    const hiredCandidates = job.applications.filter((application) => application.status === "hired");
+    const pendingCandidates = job.applications.filter((application) => application.status === "pending");
+
+    job.applications = {
+      shortlistedCandidates: shortlistedCandidates,
+      rejectedCandidates: rejectedCandidates,
+      hiredCandidates: hiredCandidates,
+      pendingCandidates: pendingCandidates,
+    };
+
+    const applicationCount = {
+      shortlisted: job.applications.shortlistedCandidates.length,
+      rejected: job.applications.rejectedCandidates.length,
+      hired: job.applications.hiredCandidates.length,
+      pending: job.applications.pendingCandidates.length,
+    };
+
+    applicationCount.total =
+      applicationCount.shortlisted +
+      applicationCount.rejected +
+      applicationCount.hired+
+      applicationCount.pending;
+    
+    res.json(
+      new ApiResponse(200,{...job,applicationCount},"job details")
+    )
+
+})
 
 export {
   createEmployee,
@@ -565,4 +732,6 @@ export {
   getEmployeeDetail,
   getAllColleges,
   getAllSkills,
+  getAllJobs,
+  getJobDetails,
 };
