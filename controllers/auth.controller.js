@@ -55,7 +55,6 @@ const registerCollege=asyncHandler(async(req,res)=>{
 	]);
 		
 	const refreshToken=generateRefreshToken(collegeAdmin)
-	const accessToken = generateAccessToken(collegeAdmin);
 
 	await prisma.user.update({
 		where:{id:collegeAdmin.id},
@@ -66,8 +65,6 @@ const registerCollege=asyncHandler(async(req,res)=>{
 	collegeAdmin.refreshToken=undefined
 
 	res
-    // .cookie("accessToken", accessToken, options)
-    // .cookie("refreshToken", refreshToken, options)
     .json(
       new ApiResponse(
         201,
@@ -124,7 +121,6 @@ const registerCompany=asyncHandler(async(req,res)=>{
 	]);
 
 	const refreshToken = generateRefreshToken(companyAdmin);
-	const accessToken = generateAccessToken(companyAdmin);
 
 	await prisma.user.update({
     where: { id: companyAdmin.id },
@@ -135,8 +131,6 @@ const registerCompany=asyncHandler(async(req,res)=>{
 	companyAdmin.refreshToken = undefined;
 
 	res
-    // .cookie("accessToken", accessToken, options)
-    // .cookie("refreshToken", refreshToken, options)
     .json(
       new ApiResponse(
         201,
@@ -173,11 +167,7 @@ const login=asyncHandler(async(req,res)=>{
 		.cookie("accessToken", accessToken, options)
 		.cookie("refreshToken", refreshToken, options)
 		.json(
-		new ApiResponse(
-			200,
-			{ user },
-			`${user.role} logged in  successfully`
-		)
+			new ApiResponse(200, user ,`${user.role} logged in  successfully`)
 		);
 })
 
@@ -239,7 +229,7 @@ const getMe=asyncHandler(async(req,res)=>{
 	user.refreshToken=undefined
 	
 	res.json(
-		new ApiResponse(200,{user},"user profile")
+		new ApiResponse(200,user,"user profile")
 	)
 })
 
