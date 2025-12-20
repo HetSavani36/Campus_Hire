@@ -182,8 +182,8 @@ const addSkill=asyncHandler(async(req,res)=>{
 
 
 const postJob = asyncHandler(async (req, res) => {
-  const { title, salary, tenure, address, dueDate, collegeIds } = req.body;
-  let { skills } = req.body;
+  const { title, salary, tenure, address, dueDate } = req.body;
+  let { skills, collegeIds } = req.body;
 
   if (!title || !Array.isArray(collegeIds) || collegeIds.length === 0)
     throw new ApiError(403, "please provide title and at least one college");
@@ -192,6 +192,7 @@ const postJob = asyncHandler(async (req, res) => {
     throw new ApiError(403, "please provide at least one skill");
 
   skills = [...new Set(skills)];
+  collegeIds = [...new Set(collegeIds)];
 
   const company = await prisma.company.findUnique({
     where: { email: req.user.email },
@@ -203,17 +204,13 @@ const postJob = asyncHandler(async (req, res) => {
     where: { id: { in: collegeIds } },
     select: { id: true },
   });
-
-  if (colleges.length !== collegeIds.length)
-    throw new ApiError(403, "one or more college IDs are invalid");
+  if (colleges.length !== collegeIds.length) throw new ApiError(403, "one or more college IDs are invalid");
 
   // Validate skills
   const skillsObtained = await prisma.skill.findMany({
     where: { id: { in: skills } },
   });
-
-  if (skillsObtained.length !== skills.length)
-    throw new ApiError(403, "one or more skill IDs are invalid");
+  if (skillsObtained.length !== skills.length) throw new ApiError(403, "one or more skill IDs are invalid");
 
   // Validate collaborations
   const collabs = await prisma.collab.findMany({
@@ -442,7 +439,7 @@ const getEmployeeDetail=asyncHandler(async(req,res)=>{
 })
 
 
-const getAllColleges=asyncHandler(async(req,res)=>{  //acceprted,rejected,pending,not applied
+const getAllColleges=asyncHandler(async(req,res)=>{  //acceprted,rejected,not applied,applied
     let {filter="all"}=req.query
 
     const company = await prisma.company.findUnique({
@@ -450,135 +447,85 @@ const getAllColleges=asyncHandler(async(req,res)=>{  //acceprted,rejected,pendin
     });
     if (!company) throw new ApiError(404, "no such company found");
 
-    let colleges=[]
-
-    const companyProjector={
-        status:true,
-        college:{
-          select:{
-            id:true,
-            name:true,
-            address:true,
-            email:true,
-            phone:true,
-            _count:{
-              select:{
-                collabs:{where:{status:"accepted"}}
-              }
-            }
-          }
-        }
+    let whereClause={ 
+      companyId: company.id, 
     }
+    if(filter === "applied" ) whereClause.status="pending"
+    if(filter ==="rejected" ) whereClause.status = "rejected";
+    if (filter === "collaborated" ) whereClause.status = "accepted";
 
-    const companyFormatter = ()=>{
-      colleges=colleges.map((college) => ({
-        id: college.college.id,
-        name: college.college.name,
-        address: college.college.address,
-        email: college.college.email,
-        phone: college.college.phone,
-        status: college.status ? college.status : "not applied",
-        collaboratedCount: college.college._count.collabs,
-      }));
-      return colleges
-    } 
-    
+    const collegeProjector = {
+      id: true,
+      name: true,
+      address: true,
+      email: true,
+    };
+
+    let colleges=[]
     if(filter==="all"){
         colleges = await prisma.college.findMany({
-          select: {
-            id: true,
-            name: true,
-            address: true,
-            email: true,
-            phone: true,
-            collabs:{
-              select:{
-                status:true
-              }
-            },
-            _count:{
-              select:{
-                collabs:{where:{status:"accepted"}}
-              }
-            }
-          },
+          select: collegeProjector,
         });
-
-        colleges=colleges.map((college)=>({
-          id:college.id,
-          name:college.name,
-          address:college.address,
-          email:college.email,
-          phone:college.phone,
-          status:college.collabs.length>0? college.collabs[0].status:"not applied",
-          collaboratedCount:college._count.collabs
-        }))
     }
-    else if(filter==="collaborated"){
-        colleges = await prisma.collab.findMany({
-          where: { companyId: company.id, status: "accepted" },
-          select: companyProjector
-        });
-        colleges=companyFormatter(colleges)
-    }
-    else if(filter==="not applied"){ //not involved with any collab
-      const collabColleges=await prisma.collab.findMany({where:{companyId:company.id},select:{collegeId:true}});
-      const collabCollegesId=collabColleges.map(collab=>collab.collegeId)
-
-      colleges = await prisma.college.findMany({
-        where: {
-          id: { notIn: collabCollegesId },
-        },
+    else{
+      const collabs = await prisma.collab.findMany({
+        where: whereClause,
         select: {
-          id: true,
-          name: true,
-          address: true,
-          email: true,
-          phone: true,
-          collabs: {
-            select: {
-              status: true,
-            },
-          },
-          _count: {
-            select: {
-              collabs: { where: { status: "accepted" } },
-            },
+          college: {
+            select: collegeProjector,
           },
         },
       });
+      colleges=collabs.map((college)=>college.college)
 
-      colleges = colleges.map((college) => ({
-        id: college.id,
-        name: college.name,
-        address: college.address,
-        email: college.email,
-        phone: college.phone,
-        status:
-          college.collabs.length > 0
-            ? college.collabs[0].status
-            : "not applied",
-        collaboratedCount: college._count.collabs,
-      }));
+      if(filter==="not_applied"){
+        const collegesId=colleges.map((college)=>college.id)
+        colleges=await prisma.college.findMany({
+          where:{
+            id:{notIn:collegesId}
+          },
+          select:collegeProjector
+        })
+      }
     }
-    else if(filter==="rejected"){
-        colleges = await prisma.collab.findMany({
-          where: { companyId: company.id, status: "rejected" },
-          select: companyProjector,
-        });
-        colleges = companyFormatter(colleges);
-    }
-    else if(filter==="pending"){
-        colleges = await prisma.collab.findMany({
-          where: { companyId: company.id, status: "pending" },
-          select: companyProjector,
-        });
-        colleges = companyFormatter(colleges);
-    }
+  
     res.json(
       new ApiResponse(200,colleges,"colleges list")
     )
 })
+
+
+const getCollegeDetails=async(req,res)=>{
+    const {collegeId}=req.params
+
+    let college=await prisma.college.findUnique({
+      where:{id:collegeId},
+      select:{
+        id:true,
+        name:true,
+        address:true,
+        email:true,
+        phone:true,
+        collabs:{
+          where:{
+            status:"accepted"
+          }
+        }
+      }
+    })
+    if(!college) throw new ApiError(404,"no such college found")
+
+    college={
+      ...college,
+      collaboratedCount:college.collabs.length
+    }
+    college.collabs=undefined
+
+    res.json(
+      new ApiResponse(200,college,"college details")
+    )
+}
+
 
 const getAllJobs = asyncHandler(async (req, res) => {
     const company = await prisma.company.findUnique({
@@ -605,12 +552,8 @@ const getAllJobs = asyncHandler(async (req, res) => {
         id:true,
         title:true,
         salary:true,
-        tenure:true,
-        status:true,
-        address:true,
         dueDate:true,
         isApproved:true,
-        createdAt:true
       }
     });
 
@@ -734,4 +677,5 @@ export {
   getAllSkills,
   getAllJobs,
   getJobDetails,
+  getCollegeDetails,
 };
