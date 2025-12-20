@@ -259,50 +259,29 @@ const assignMentor=asyncHandler(async(req,res)=>{
 
 
 const getMentorsList=asyncHandler(async(req,res)=>{
-    const {search,filter="all"}=req.query
+    const {filter="all"}=req.query
 
     const college=await prisma.college.findUnique({
       where:{email:req.user.email}
     })
     if(!college) throw new ApiError(404,"no such college found")
 
-    let userQuery = {
-      ...(search && {
-            OR: [
-              { name: { contains: search, mode: "insensitive" } },
-              { email: { contains: search, mode: "insensitive" } },
-            ]
-      }),
+    let whereClause = {
+      isApproved: true,
+      collegeId: college.id,
+      status: "active",
+      mentorId: { not: null }
     };
+    if(filter==="allocated_current" || filter==="available") whereClause.dueDate={gte:new Date()}
+    if(filter==="allocated_past") whereClause.dueDate={lt:new Date()}
 
-    const allMentors=await prisma.mentor.findMany({
-      where:{
-        collegeId:college.id,
-        user:userQuery
-      },
-      select:{
+    const jobs = await prisma.job.findMany({
+      where: whereClause,
+      select: {
         id:true,
-        user:{  
-            select:{
-              id:true,
-              name:true,
-              email:true
-            }
-        }
-      }
-    })
-
-    const onGoingJobs = await prisma.job.findMany({
-      where: {
-        collegeId: college.id,
-        dueDate: { gte: new Date() },
-        isApproved:true,
-        mentorId:{not:null}
-      },
-      select: {
+        title:true,
         mentor: {
           select: {
-            id: true,
             user: {
               select: {
                 id: true,
@@ -315,55 +294,46 @@ const getMentorsList=asyncHandler(async(req,res)=>{
       },
     });
 
-    const allocatedMentors = onGoingJobs.map((job) => {
-      return {
-        id: job.mentor.id,
-        user: job.mentor.user,
-      };
-    });
+    let mentors=null
 
-    const pastJobs = await prisma.job.findMany({
-      where: {
-        collegeId: college.id,
-        dueDate: { lt: new Date() },
-        isApproved: true,
-        mentorId: { not: null },
-      },
-      select: {
-        mentor: {
-          select: {
-            id: true,
-            user: {
-              select: {
-                id: true,
-                name: true,
-                email: true,
-              },
+    if(filter==="available"){
+      const currentlyAllocatedIds=jobs.map((job)=>job.mentor.user.id)
+      mentors = await prisma.mentor.findMany({
+        where: {
+          id: {
+            notIn: currentlyAllocatedIds,
+          },
+        },
+        select: {
+          user: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
             },
           },
         },
-      },
-    });
+      });
 
-    const pastAllocatedMentors = pastJobs.map((job) => {
-      return {
-        id: job.mentor.id,
-        user: job.mentor.user,
-      };
-    });
+      mentors=mentors.map((mentor)=>mentor.user)
+    }
+    else{
+      mentors = jobs.map((job) => ({
+        id: job.mentor.user.id,
+        name: job.mentor.user.name,
+        email: job.mentor.user.email,
+        job: {
+          id: job.id,
+          title: job.title,
+        },
+      }));
+    }
 
-    const allocatedMentorIds = new Set(allocatedMentors.map((m) => m.id));
-    const availableMentors = allMentors.filter( (m) => !allocatedMentorIds.has(m.id) );
-    
+
     res.json(
       new ApiResponse(
         200,
-        {
-          allMentors: allMentors,
-          allocatedMentors: allocatedMentors,
-          pastAllocatedMentors: pastAllocatedMentors,
-          availableMentors: availableMentors,
-        },
+        mentors,
         "all mentors fetched successfully"
       )
     );
