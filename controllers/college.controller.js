@@ -4,7 +4,6 @@ import ApiResponse from "../utils/ApiResponse.js";
 import { PrismaClient } from "@prisma/client";
 import { generatePassword, hashPassword } from "../utils/password.util.js";
 import { sendEmail } from "../utils/email.js";
-import { compare } from "bcrypt";
 const prisma=new PrismaClient()
 
 const createMentor=asyncHandler(async(req,res)=>{
@@ -254,56 +253,36 @@ const assignMentor=asyncHandler(async(req,res)=>{
   })
 
   res.json(
-    new ApiResponse(200,{mentor:mentor},"mentor assigned/updated successfully")
+    new ApiResponse(200,mentor,"mentor assigned/updated successfully")
   )
 })
 
 
 const getMentorsList=asyncHandler(async(req,res)=>{
-    const {search}=req.query
+    const {filter="all"}=req.query
 
     const college=await prisma.college.findUnique({
       where:{email:req.user.email}
     })
     if(!college) throw new ApiError(404,"no such college found")
 
-    let userQuery = {
-      ...(search && {
-            OR: [
-              { name: { contains: search, mode: "insensitive" } },
-              { email: { contains: search, mode: "insensitive" } },
-            ]
-      }),
+    let whereClause = {
+      isApproved: true,
+      collegeId: college.id,
+      status: "active",
+      mentorId: { not: null }
     };
+    if(filter==="allocated_current" || filter==="available") whereClause.dueDate={gte:new Date()}
+    if(filter==="allocated_past") whereClause.dueDate={lt:new Date()}
 
-    const allMentors=await prisma.mentor.findMany({
-      where:{
-        collegeId:college.id,
-        user:userQuery
-      },
-      select:{
+    const jobs = await prisma.job.findMany({
+      where: whereClause,
+      select: {
         id:true,
-        user:{  
-            select:{
-              id:true,
-              name:true,
-              email:true
-            }
-        }
-      }
-    })
-
-    const onGoingJobs = await prisma.job.findMany({
-      where: {
-        collegeId: college.id,
-        dueDate: { gte: new Date() },
-        isApproved:true,
-        mentorId:{not:null}
-      },
-      select: {
+        title:true,
         mentor: {
           select: {
-            id: true,
+            id:true,
             user: {
               select: {
                 id: true,
@@ -316,55 +295,53 @@ const getMentorsList=asyncHandler(async(req,res)=>{
       },
     });
 
-    const allocatedMentors = onGoingJobs.map((job) => {
-      return {
-        id: job.mentor.id,
-        user: job.mentor.user,
-      };
-    });
+    let mentors=null
 
-    const pastJobs = await prisma.job.findMany({
-      where: {
-        collegeId: college.id,
-        dueDate: { lt: new Date() },
-        isApproved: true,
-        mentorId: { not: null },
-      },
-      select: {
-        mentor: {
-          select: {
-            id: true,
-            user: {
-              select: {
-                id: true,
-                name: true,
-                email: true,
-              },
+    if(filter==="available"){
+      const currentlyAllocatedIds=jobs.map((job)=>job.mentor.user.id)
+      mentors = await prisma.mentor.findMany({
+        where: {
+          id: {
+            notIn: currentlyAllocatedIds,
+          },
+        },
+        select: {
+          id:true,
+          user: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
             },
           },
         },
-      },
-    });
+      });
 
-    const pastAllocatedMentors = pastJobs.map((job) => {
-      return {
+      mentors = mentors.map((mentor) => ({
+        id: mentor.id,
+        name: mentor.user.name,
+        email: mentor.user.email,
+        userId: mentor.user.userId,
+      }));
+    }
+    else{
+      mentors = jobs.map((job) => ({
         id: job.mentor.id,
-        user: job.mentor.user,
-      };
-    });
+        name: job.mentor.user.name,
+        userId: job.mentor.user.id,
+        email: job.mentor.user.email,
+        job: {
+          id: job.id,
+          title: job.title,
+        },
+      }));
+    }
 
-    const allocatedMentorIds = new Set(allocatedMentors.map((m) => m.id));
-    const availableMentors = allMentors.filter( (m) => !allocatedMentorIds.has(m.id) );
-    
+
     res.json(
       new ApiResponse(
         200,
-        {
-          allMentors: allMentors,
-          allocatedMentors: allocatedMentors,
-          pastAllocatedMentors: pastAllocatedMentors,
-          availableMentors: availableMentors,
-        },
+        mentors,
         "all mentors fetched successfully"
       )
     );
@@ -372,7 +349,8 @@ const getMentorsList=asyncHandler(async(req,res)=>{
 
 
 const mentorDetails=asyncHandler(async(req,res)=>{
-    const {mentorId}=req.params
+    const { filter } = req.query;
+    const { mentorId } = req.params;
     if(!mentorId) throw new ApiError(403,"please provide mentor id")
     
     const college=await prisma.college.findUnique({
@@ -380,52 +358,49 @@ const mentorDetails=asyncHandler(async(req,res)=>{
     })
     if(!college) throw new ApiError(404,"no such college found")
     
-    const mentor=await prisma.mentor.findUnique({
-      where:{id:mentorId},
-      select:{
-        id:true,
-        collegeId:true,
-        user:{
-            select:{
-              id:true,
-              name:true,
-              email:true,
-            }
-        }
-      }
-    })  
-    if(!mentor) throw new ApiError(404,"no such employee found")
+    let whereClause = {
+      collegeId: college.id,
+      isApproved: true,
+    };
+    if (filter === "jobs_current") whereClause.dueDate = { gte: new Date() };
+    if (filter === "jobs_past") whereClause.dueDate = { lt: new Date() };
+            
 
-    if(mentor.collegeId!==college.id) throw new ApiError(403,"you cant access mentor details of another college")
-
-    const allocatedJob=await prisma.job.findMany({
-        where:{
-          dueDate:{gte:new Date()},
-          collegeId:college.id,
-          isApproved:true,
-          mentorId:mentor.id
+    let mentor = await prisma.mentor.findUnique({
+      where: { id: mentorId },
+      select: {
+        id: true,
+        collegeId: true,
+        user: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+          },
         },
-        select:{
-          id:true,
-          title:true,
-          salary:true,
-          tenure:true,
-          address:true,
-          dueDate:true,
-          company:{
-            select:{
-              id:true,
-              name:true,
-              address:true,
-              email:true,
-              contactNo:true
-            }
-          }
-        }
-    })
+        jobs: {
+          where: whereClause,
+          select: {
+            id: true,
+            title: true,  
+          },
+        },
+      },
+    });  
+    if(!mentor) throw new ApiError(404,"no such employee found")
+    if(mentor.collegeId!==college.id) throw new ApiError(403,"you cant access mentor details of another college")
+      
+    mentor = {
+      name: mentor.user.name,
+      ...mentor,
+      email: mentor.user.email,
+      userId: mentor.user.id,
+    };
+    mentor.collegeId=undefined
+    mentor.user=undefined
 
     res.json(
-      new ApiResponse(200,{mentor:mentor,allocatedJob:allocatedJob},"mentor detail")
+      new ApiResponse(200,mentor,"mentor detail")
     )
 })
 
@@ -496,35 +471,28 @@ const getCompanyDetails=asyncHandler(async(req,res)=>{
 
 
 const getAllJobRequests=asyncHandler(async(req,res)=>{
-    let {isApproved="false",present}=req.query
+    let {isApproved="false"}=req.query
     isApproved = isApproved === "true";
-    present = present === "true";
 
     const college = await prisma.college.findUnique({
       where: { email: req.user.email },
     });
     if (!college) throw new ApiError(404, "no such college found");
 
-    const dueDateFilter = isApproved
-      ? present
-        ? { gte: new Date() }
-        : {}
-      : { gte: new Date() };
-
+    let whereClause = {
+      collegeId: college.id,
+      isApproved: isApproved,
+      status: "active",
+    };
+    if (!isApproved) whereClause.dueDate = { gte: new Date() };
+    
     const jobRequests = await prisma.job.findMany({
-      where: {
-        collegeId: college.id,
-        isApproved: isApproved,
-        dueDate: dueDateFilter,
-        status: "active",
-      },
+      where: whereClause,
       select: {
         id: true,
         title: true,
         salary: true,
-        tenure: true,
         dueDate: true,
-        collegeId: true,
         companyId: true,
         isApproved: true,
         createdAt: true,
