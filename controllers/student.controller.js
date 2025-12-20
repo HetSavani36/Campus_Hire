@@ -11,7 +11,6 @@ const uploadBulkStudents=asyncHandler(async(req,res)=>{
     if (!req.file) throw new ApiError(400, "CSV file is required");
 
     // 1. Parse CSV → JSON array
-    console.log(req.file);
     
     const rows = await parseCSVBuffer(req.file.buffer);
     const college=await prisma.college.findUnique({
@@ -26,7 +25,7 @@ const uploadBulkStudents=asyncHandler(async(req,res)=>{
             if (!Object.hasOwn(rows, row)) continue;
             
             const element = rows[row];
-            if(!element.email || !element.name) throw new ApiError(403,"providel all details")
+            if(!element.email || !element.name) throw new ApiError(403,"provide all details")
             const exists=await tx.user.findUnique({
                 where:{email:element.email}
             })
@@ -287,101 +286,77 @@ const apply=asyncHandler(async(req,res)=>{
 })
 
 const getJobsList=asyncHandler(async(req,res)=>{
-    const {filter="current"}=req.query
+  //current,past,shortlisted,hired,rejected,pending,menterApproval_pending,menterApproval_rejected,menterApproval_approved,applied,not_applied
+  const { filter = "current" } = req.query;
 
-    const student=await prisma.student.findUnique({
-        where:{userId:req.user.id},
-        select:{
-            id:true,
-            userId:true,
-            collegeId:true
-        }
-    })
-    
+  const student = await prisma.student.findUnique({
+    where: { userId: req.user.id },
+    select: {
+      id: true,
+      userId: true,
+      collegeId: true,
+    },
+  });
+  if (!student) throw new ApiError(404, "no such student found");
 
-    let whereClause={
-        status: "active",
-        collegeId: student.collegeId,
-        isApproved: true,
-        mentorId: { not: null },
-    }
-    
+  let jobs = [];
+  const jobProjector = {
+    id: true,
+    title: true,
+    salary: true,
+    dueDate: true,
+  };
 
-    if(filter==="current") whereClause.dueDate={gte: new Date() }
-    if(filter==="past") whereClause.dueDate={lt: new Date() }
-    
-    
-    let jobs = await prisma.job.findMany({
-        where: whereClause,
-        select:{
-            id:true
-        }
+  if (filter === "current" || filter === "past" || filter==="all") {
+    let whereClause = {
+      status: "active",
+      collegeId: student.collegeId,
+      isApproved: true,
+      mentorId: { not: null }
+    };
+    if (filter === "past") whereClause.dueDate = { lt: new Date() };
+    if (filter === "current") whereClause.dueDate = { gte: new Date() };
+
+    jobs = await prisma.job.findMany({
+      where: whereClause,
+      select: jobProjector,
     });
-    
-    jobs=jobs.map((job)=>job.id)
+  } 
+  else {
+        let whereClause = {
+            studentId: student.id,
+        };
+        if (filter === "pending") whereClause.status = "pending";
+        if(filter==="rejected") whereClause.status="rejected"
+        if(filter==="shortlisted") whereClause.status="shortlisted"
+        if (filter === "hired") whereClause.status = "hired";
 
-    let newWhereClause={
-        studentId:student.id,
-        jobId:{in:jobs},
-    }
-    
-    if(filter==="pending") newWhereClause.status="pending"
-    if(filter==="rejected") newWhereClause.status = "rejected"
-    if(filter==="shortlisted") newWhereClause.status = "shortlisted";
-    if(filter==="hired") newWhereClause.status = "hired"
-    if (filter === "mentor_approved") newWhereClause.mentorApproval = "approved";
-    if (filter === "mentor_pending") newWhereClause.mentorApproval = "pending";
-    if (filter === "mentor_rejected") newWhereClause.mentorApproval = "rejected";
+        if (filter === "mentor_approval_pending") whereClause.mentorApproval = "pending";
+        if (filter === "mentor_approval_approved") whereClause.mentorApproval = "approved";
+        if (filter === "mentor_approval_rejected") whereClause.mentorApproval = "rejected";
 
-
-    let updatedJobs=await prisma.application.findMany({
-        where:newWhereClause,
-        select:{
-            status:true,
-            mentorApproval:true,
-            job:{
-                select:{
-                    title:true,
-                    id:true,
-                    salary:true,
-                    dueDate:true
+        const applications = await prisma.application.findMany({
+            where:whereClause,
+            select:{
+                job:{
+                    select:jobProjector
                 }
             }
+        });
+        jobs=applications.map((application)=>application.job)
+
+        if(filter==="not_applied"){
+            const appliedJobIds=jobs.map((job)=>job.id)
+            jobs=await prisma.job.findMany({
+                where:{
+                    id:{notIn:appliedJobIds}
+                },
+                select:jobProjector
+            })
         }
-    })
+  }
 
-    updatedJobs = updatedJobs.map((job) => ({
-      ...job,
-      title: job.job.title,
-      id: job.job.id,
-      salary: job.job.salary,
-      dueDate: job.job.dueDate,
-      job:undefined
-    }));
-
-    const updatedJobsIds = updatedJobs.map((job) => job.id);
-
-    let unappliedJobs = await prisma.job.findMany({
-      where: {
-        id: { notIn: updatedJobsIds },
-      },
-      select: {
-        title: true,
-        id: true,
-        salary: true,
-        dueDate: true,
-      },
-    });
-    
-    unappliedJobs=unappliedJobs.map((job)=>({
-        ...job,
-        status: "not applied",
-        mentorApproval: null,
-    }))
-
-    const allJobs=[...updatedJobs,...unappliedJobs]
-
-    res.json(new ApiResponse(200, allJobs, "student jobs"));
+  res.json(new ApiResponse(200, jobs, "student jobs"));
 })
 
 

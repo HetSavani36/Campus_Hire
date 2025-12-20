@@ -50,10 +50,10 @@ const getAllJobs=asyncHandler(async(req,res)=>{
 
     let whereClause={
         collegeId:mentor.collegeId,
-        mentorId:mentor.id,
+        mentorId:mentor.id
     }
     if (filter === "past") whereClause.dueDate = { lt: new Date() };
-    if (filter==="current") whereClause.dueDate={gte:new Date()}
+    if (filter === "current") whereClause.dueDate = { gte: new Date() };
 
     const jobs=await prisma.job.findMany({
         where:whereClause,
