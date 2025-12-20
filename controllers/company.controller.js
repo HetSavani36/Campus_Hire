@@ -182,8 +182,8 @@ const addSkill=asyncHandler(async(req,res)=>{
 
 
 const postJob = asyncHandler(async (req, res) => {
-  const { title, salary, tenure, address, dueDate, collegeIds } = req.body;
-  let { skills } = req.body;
+  const { title, salary, tenure, address, dueDate } = req.body;
+  let { skills, collegeIds } = req.body;
 
   if (!title || !Array.isArray(collegeIds) || collegeIds.length === 0)
     throw new ApiError(403, "please provide title and at least one college");
@@ -192,6 +192,7 @@ const postJob = asyncHandler(async (req, res) => {
     throw new ApiError(403, "please provide at least one skill");
 
   skills = [...new Set(skills)];
+  collegeIds = [...new Set(collegeIds)];
 
   const company = await prisma.company.findUnique({
     where: { email: req.user.email },
@@ -203,17 +204,13 @@ const postJob = asyncHandler(async (req, res) => {
     where: { id: { in: collegeIds } },
     select: { id: true },
   });
-
-  if (colleges.length !== collegeIds.length)
-    throw new ApiError(403, "one or more college IDs are invalid");
+  if (colleges.length !== collegeIds.length) throw new ApiError(403, "one or more college IDs are invalid");
 
   // Validate skills
   const skillsObtained = await prisma.skill.findMany({
     where: { id: { in: skills } },
   });
-
-  if (skillsObtained.length !== skills.length)
-    throw new ApiError(403, "one or more skill IDs are invalid");
+  if (skillsObtained.length !== skills.length) throw new ApiError(403, "one or more skill IDs are invalid");
 
   // Validate collaborations
   const collabs = await prisma.collab.findMany({
@@ -605,12 +602,8 @@ const getAllJobs = asyncHandler(async (req, res) => {
         id:true,
         title:true,
         salary:true,
-        tenure:true,
-        status:true,
-        address:true,
         dueDate:true,
         isApproved:true,
-        createdAt:true
       }
     });
 
