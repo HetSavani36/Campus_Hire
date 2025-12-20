@@ -488,12 +488,44 @@ const getAllColleges=asyncHandler(async(req,res)=>{  //acceprted,rejected,not ap
         })
       }
     }
-    
-
+  
     res.json(
       new ApiResponse(200,colleges,"colleges list")
     )
 })
+
+
+const getCollegeDetails=async(req,res)=>{
+    const {collegeId}=req.params
+
+    let college=await prisma.college.findUnique({
+      where:{id:collegeId},
+      select:{
+        id:true,
+        name:true,
+        address:true,
+        email:true,
+        phone:true,
+        collabs:{
+          where:{
+            status:"accepted"
+          }
+        }
+      }
+    })
+    if(!college) throw new ApiError(404,"no such college found")
+
+    college={
+      ...college,
+      collaboratedCount:college.collabs.length
+    }
+    college.collabs=undefined
+
+    res.json(
+      new ApiResponse(200,college,"college details")
+    )
+}
+
 
 const getAllJobs = asyncHandler(async (req, res) => {
     const company = await prisma.company.findUnique({
@@ -645,4 +677,5 @@ export {
   getAllSkills,
   getAllJobs,
   getJobDetails,
+  getCollegeDetails,
 };
