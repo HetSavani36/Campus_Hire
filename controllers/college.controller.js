@@ -282,6 +282,7 @@ const getMentorsList=asyncHandler(async(req,res)=>{
         title:true,
         mentor: {
           select: {
+            id:true,
             user: {
               select: {
                 id: true,
@@ -305,6 +306,7 @@ const getMentorsList=asyncHandler(async(req,res)=>{
           },
         },
         select: {
+          id:true,
           user: {
             select: {
               id: true,
@@ -315,12 +317,18 @@ const getMentorsList=asyncHandler(async(req,res)=>{
         },
       });
 
-      mentors=mentors.map((mentor)=>mentor.user)
+      mentors = mentors.map((mentor) => ({
+        id: mentor.id,
+        name: mentor.user.name,
+        email: mentor.user.email,
+        userId: mentor.user.userId,
+      }));
     }
     else{
       mentors = jobs.map((job) => ({
-        id: job.mentor.user.id,
+        id: job.mentor.id,
         name: job.mentor.user.name,
+        userId: job.mentor.user.id,
         email: job.mentor.user.email,
         job: {
           id: job.id,
@@ -349,52 +357,36 @@ const mentorDetails=asyncHandler(async(req,res)=>{
     })
     if(!college) throw new ApiError(404,"no such college found")
     
-    const mentor=await prisma.mentor.findUnique({
-      where:{id:mentorId},
-      select:{
-        id:true,
-        collegeId:true,
-        user:{
-            select:{
-              id:true,
-              name:true,
-              email:true,
-            }
-        }
-      }
-    })  
+    const mentor = await prisma.mentor.findUnique({
+      where: { id: mentorId },
+      select: {
+        id: true,
+        collegeId: true,
+        user: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+          },
+        },
+        jobs: {
+          where: {
+            dueDate: { gte: new Date() },
+            collegeId: college.id,
+            isApproved: true,
+          },
+          select: {
+            id: true,
+            title: true,  
+          },
+        },
+      },
+    });  
     if(!mentor) throw new ApiError(404,"no such employee found")
-
     if(mentor.collegeId!==college.id) throw new ApiError(403,"you cant access mentor details of another college")
 
-    const allocatedJob=await prisma.job.findMany({
-        where:{
-          dueDate:{gte:new Date()},
-          collegeId:college.id,
-          isApproved:true,
-          mentorId:mentor.id
-        },
-        select:{
-          id:true,
-          title:true,
-          salary:true,
-          tenure:true,
-          address:true,
-          dueDate:true,
-          company:{
-            select:{
-              id:true,
-              name:true,
-              address:true,
-              email:true,
-              contactNo:true
-            }
-          }
-        }
-    })
-
     res.json(
-      new ApiResponse(200,{mentor:mentor,allocatedJob:allocatedJob},"mentor detail")
+      new ApiResponse(200,mentor,"mentor detail")
     )
 })
 
