@@ -4,7 +4,6 @@ import ApiResponse from "../utils/ApiResponse.js";
 import { PrismaClient } from "@prisma/client";
 import { generatePassword, hashPassword } from "../utils/password.util.js";
 import { sendEmail } from "../utils/email.js";
-import { compare } from "bcrypt";
 const prisma=new PrismaClient()
 
 const createMentor=asyncHandler(async(req,res)=>{
@@ -254,13 +253,13 @@ const assignMentor=asyncHandler(async(req,res)=>{
   })
 
   res.json(
-    new ApiResponse(200,{mentor:mentor},"mentor assigned/updated successfully")
+    new ApiResponse(200,mentor,"mentor assigned/updated successfully")
   )
 })
 
 
 const getMentorsList=asyncHandler(async(req,res)=>{
-    const {search}=req.query
+    const {search,filter="all"}=req.query
 
     const college=await prisma.college.findUnique({
       where:{email:req.user.email}

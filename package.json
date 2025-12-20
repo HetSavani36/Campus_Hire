@@ -14,6 +14,7 @@
   "dependencies": {
     "@prisma/client": "^6.19.0",
     "bcrypt": "^6.0.0",
+    "bullmq": "^5.66.2",
     "cloudinary": "^2.7.0",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
