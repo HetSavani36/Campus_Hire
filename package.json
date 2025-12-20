@@ -7,6 +7,9 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "start": "nodemon index.js"
   },
+  "prisma": {
+    "seed": "node prisma/seed.js"
+  },
   "keywords": [],
   "author": "",
   "license": "ISC",
@@ -34,6 +37,8 @@
     "streamifier": "^0.1.1"
   },
   "devDependencies": {
+    "@faker-js/faker": "^10.1.0",
+    "bcryptjs": "^3.0.3",
     "prisma": "^6.19.0"
   }
 }

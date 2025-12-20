@@ -275,68 +275,40 @@ const getMentorsList=asyncHandler(async(req,res)=>{
     if(filter==="allocated_current" || filter==="available") whereClause.dueDate={gte:new Date()}
     if(filter==="allocated_past") whereClause.dueDate={lt:new Date()}
 
-    const jobs = await prisma.job.findMany({
-      where: whereClause,
+    let mentors = await prisma.mentor.findMany({
+      where: {
+        collegeId: college.id,
+      },
       select: {
         id:true,
-        title:true,
-        mentor: {
+        user: {
           select: {
-            id:true,
-            user: {
-              select: {
-                id: true,
-                name: true,
-                email: true,
-              },
-            },
+            id: true,
+            name: true,
+            email: true,
+          },
+        },
+        jobs: {
+          where: whereClause,
+          select: {
+            id: true,
+            title: true,
+            dueDate:true
           },
         },
       },
     });
 
-    let mentors=null
-
-    if(filter==="available"){
-      const currentlyAllocatedIds=jobs.map((job)=>job.mentor.user.id)
-      mentors = await prisma.mentor.findMany({
-        where: {
-          id: {
-            notIn: currentlyAllocatedIds,
-          },
-        },
-        select: {
-          id:true,
-          user: {
-            select: {
-              id: true,
-              name: true,
-              email: true,
-            },
-          },
-        },
-      });
-
-      mentors = mentors.map((mentor) => ({
-        id: mentor.id,
-        name: mentor.user.name,
-        email: mentor.user.email,
-        userId: mentor.user.userId,
-      }));
-    }
-    else{
-      mentors = jobs.map((job) => ({
-        id: job.mentor.id,
-        name: job.mentor.user.name,
-        userId: job.mentor.user.id,
-        email: job.mentor.user.email,
-        job: {
-          id: job.id,
-          title: job.title,
-        },
-      }));
-    }
-
+    mentors = mentors.map((mentor) => ({
+      id:mentor.id,
+      userId: mentor.user.id,
+      name: mentor.user.name,
+      email: mentor.user.email,
+      jobs:mentor.jobs
+    }));
+    
+    if(filter==="available") mentors=mentors.filter((mentor)=>mentor.jobs.length===0)
+    else mentors=mentors.filter((mentor)=>mentor.jobs.length>0)
 
     res.json(
       new ApiResponse(
