@@ -349,7 +349,8 @@ const getMentorsList=asyncHandler(async(req,res)=>{
 
 
 const mentorDetails=asyncHandler(async(req,res)=>{
-    const {mentorId}=req.params
+    const { filter } = req.query;
+    const { mentorId } = req.params;
     if(!mentorId) throw new ApiError(403,"please provide mentor id")
     
     const college=await prisma.college.findUnique({
@@ -357,7 +358,15 @@ const mentorDetails=asyncHandler(async(req,res)=>{
     })
     if(!college) throw new ApiError(404,"no such college found")
     
-    const mentor = await prisma.mentor.findUnique({
+    let whereClause = {
+      collegeId: college.id,
+      isApproved: true,
+    };
+    if (filter === "jobs_current") whereClause.dueDate = { gte: new Date() };
+    if (filter === "jobs_past") whereClause.dueDate = { lt: new Date() };
+            
+
+    let mentor = await prisma.mentor.findUnique({
       where: { id: mentorId },
       select: {
         id: true,
@@ -370,11 +379,7 @@ const mentorDetails=asyncHandler(async(req,res)=>{
           },
         },
         jobs: {
-          where: {
-            dueDate: { gte: new Date() },
-            collegeId: college.id,
-            isApproved: true,
-          },
+          where: whereClause,
           select: {
             id: true,
             title: true,  
@@ -384,6 +389,15 @@ const mentorDetails=asyncHandler(async(req,res)=>{
     });  
     if(!mentor) throw new ApiError(404,"no such employee found")
     if(mentor.collegeId!==college.id) throw new ApiError(403,"you cant access mentor details of another college")
+      
+    mentor = {
+      name: mentor.user.name,
+      ...mentor,
+      email: mentor.user.email,
+      userId: mentor.user.id,
+    };
+    mentor.collegeId=undefined
+    mentor.user=undefined
 
     res.json(
       new ApiResponse(200,mentor,"mentor detail")
