@@ -450,7 +450,7 @@ const getAllColleges=asyncHandler(async(req,res)=>{  //acceprted,rejected,not ap
     let whereClause={ 
       companyId: company.id, 
     }
-    if(filter === "applied" ) whereClause.status="pending"
+    if(filter === "pending" ) whereClause.status="pending"
     if(filter ==="rejected" ) whereClause.status = "rejected";
     if (filter === "collaborated" ) whereClause.status = "accepted";
 
@@ -459,18 +459,37 @@ const getAllColleges=asyncHandler(async(req,res)=>{  //acceprted,rejected,not ap
       name: true,
       address: true,
       email: true,
-    };
+    };    
 
     let colleges=[]
     if(filter==="all"){
         colleges = await prisma.college.findMany({
-          select: collegeProjector,
+          select: {
+            ...collegeProjector,
+            collabs:{
+              where:{companyId:company.id},
+              select:{status:true}
+            }
+          },
         });
+        
+        colleges = colleges.map((college) => ({
+          id: college.id,
+          name: college.name,
+          address: college.address,
+          email: college.email,
+          status: college.collabs.length>0
+            ? college.collabs[0].status === "accepted"
+              ? "collaborated"
+              : college.collabs[0].status
+            : "not applied",
+        }));
     }
     else{
       const collabs = await prisma.collab.findMany({
         where: whereClause,
         select: {
+          status:true,
           college: {
             select: collegeProjector,
           },
@@ -486,6 +505,11 @@ const getAllColleges=asyncHandler(async(req,res)=>{  //acceprted,rejected,not ap
           },
           select:collegeProjector
         })
+
+        colleges=colleges.map((college)=>({
+          ...college,
+          status:"not applied"
+        }))
       }
     }
   
