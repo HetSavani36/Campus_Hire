@@ -8,7 +8,7 @@ import { sendEmail } from "../utils/email.js";
 const prisma=new PrismaClient()
 
 const createEmployee=asyncHandler(async(req,res)=>{
-    const {name,email}=req.body
+    const {name,email,hireDate}=req.body
     if(!name || !email) throw new ApiError(403,"please provide all details")
 
     const exists=await prisma.user.findUnique({
@@ -39,7 +39,8 @@ const createEmployee=asyncHandler(async(req,res)=>{
                 name:name,
                 email:email,
                 password:hashedPassword,
-                role:"employee"
+                role:"employee",
+                createdAt:hireDate? new Date(hireDate) :undefined
             }
         })
     
@@ -441,7 +442,7 @@ const getEmployeeDetail=asyncHandler(async(req,res)=>{
 
 const getAllColleges=asyncHandler(async(req,res)=>{  //acceprted,rejected,not applied,applied
     let {filter="all"}=req.query
-
+    
     const company = await prisma.company.findUnique({
       where: { email: req.user.email },
     });
@@ -578,6 +579,13 @@ const getAllJobs = asyncHandler(async (req, res) => {
         salary:true,
         dueDate:true,
         isApproved:true,
+        createdAt:true,
+        college:{
+          select:{
+            name:true,
+            address:true
+          }
+        }
       }
     });
 
@@ -688,6 +696,45 @@ const getJobDetails=asyncHandler(async(req,res)=>{
 
 })
 
+const exportEmployees = asyncHandler(async (req, res) => {
+  const company = await prisma.company.findUnique({
+    where: { email: req.user.email },
+  });
+  if (!company) throw new ApiError(404, "no such company found");
+
+  const employees = await prisma.employee.findMany({
+    where: { companyId: company.id },
+    select: {
+      id: true,
+      user: {
+        select: {
+          name: true,
+          email: true,
+          createdAt: true,
+        },
+      },
+    },
+  });
+
+  const data = [
+    ["ID", "NAME", "EMAIL", "HIRE DATE"],
+    ...employees.map((e) => [
+      e.id,
+      e.user.name,
+      e.user.email,
+      e.user.createdAt.toISOString(), // IMPORTANT
+    ]),
+  ];
+
+  const csv = data.map((row) => row.join(",")).join("\n");
+
+  res
+    .setHeader("Content-Type", "text/csv")
+    .setHeader("Content-Disposition", "attachment; filename=employees.csv")
+    .send(csv);
+});
+
+
 export {
   createEmployee,
   collabWithCollege,
@@ -702,4 +749,5 @@ export {
   getAllJobs,
   getJobDetails,
   getCollegeDetails,
+  exportEmployees,
 };

@@ -34,9 +34,10 @@ const verifyRefreshToken = (token) => {
   return jwt.verify(token, process.env.REFRESH_TOKEN_SECRET_KEY );
 };
 
-const options={
-    httpOnly:true,
-    secure:true
-}
+const options = {
+  httpOnly: true,
+  secure: true,
+  sameSite: "none",
+};
 
 export {generateAccessToken,generateRefreshToken,verifyRefreshToken,options}

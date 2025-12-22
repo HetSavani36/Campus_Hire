@@ -177,12 +177,12 @@ const logout=asyncHandler(async(req,res)=>{
 		data:{refreshToken:""}
 	})
 
+	console.log('logout');
+	
 	res
-	.clearCookie("accessToken")
-	.clearCookie("refreshToken")
-	.json(
-		new ApiResponse(200,{},"user logout successfully")
-	)
+    .clearCookie("accessToken", options)
+    .clearCookie("refreshToken",options)
+    .json(new ApiResponse(200, {}, "user logout successfully"));
 })
 
 const refreshController=asyncHandler(async(req,res)=>{
