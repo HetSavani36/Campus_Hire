@@ -729,9 +729,10 @@ const exportEmployees = asyncHandler(async (req, res) => {
   const csv = data.map((row) => row.join(",")).join("\n");
 
   res
-    .setHeader("Content-Type", "text/csv")
+    .setHeader("Content-Type", "text/csv; charset=utf-8")
     .setHeader("Content-Disposition", "attachment; filename=employees.csv")
-    .send(csv);
+    .setHeader("Cache-Control", "no-store")
+    .send("\uFEFF" + csv);
 });
 
 
