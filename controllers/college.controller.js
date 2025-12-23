@@ -231,6 +231,19 @@ const jobApprovalDecision = asyncHandler(async (req, res) => {
 
   const job = await prisma.job.findUnique({
     where: { id: jobId },
+    select:{
+      id:true,
+      title:true,
+      dueDate:true,
+      isApproved:true,
+      collegeId:true,
+      company:{
+        select:{
+          name:true,
+          email:true
+        }
+      }
+    }
   });
   if (!job) throw new ApiError(404, "no such job found");
 
@@ -253,6 +266,19 @@ const jobApprovalDecision = asyncHandler(async (req, res) => {
       where: { id: job.id },
     });
   }
+
+  await emailQueue.add(
+    "job-decision",
+    {
+      companyName:job.company.name,
+      collegeName:college.name,
+      jobTitle:job.title,
+      status:approval?"approved":"rejected",
+      companyEmail:job.company.email,
+    },
+    emailOptions
+  );
+  
 
   res.json(
     new ApiResponse(
@@ -288,6 +314,16 @@ const assignMentor = asyncHandler(async (req, res) => {
         },
       }),
     },
+    select:{
+      id:true,
+      collegeId:true,
+      user:{
+        select:{
+          name:true,
+          email:true
+        }
+      }
+    }
   });
   if (!mentor) throw new ApiError(404, "no such mentor found");
 
@@ -296,6 +332,18 @@ const assignMentor = asyncHandler(async (req, res) => {
 
   const job = await prisma.job.findUnique({
     where: { id: jobId },
+    select:{
+      collegeId:true,
+      dueDate:true,
+      status:true,
+      isApproved:true,
+      id:true,
+      company:{
+        select:{
+          name:true
+        }
+      }
+    }
   });
   if (!job) throw new ApiError(404, "no such job found");
   if (college.id !== job.collegeId)
@@ -316,6 +364,17 @@ const assignMentor = asyncHandler(async (req, res) => {
       mentorId: mentorId,
     },
   });
+
+  await emailQueue.add(
+    "assign-mentor",
+    {
+      mentorName:mentor.user.name,
+      jobTitle:job.title,
+      companyName:job.company.name,
+      mentorEmail:mentor.user.email,
+    },
+    emailOptions
+  );
 
   res.json(
     new ApiResponse(200, mentor, "mentor assigned/updated successfully")

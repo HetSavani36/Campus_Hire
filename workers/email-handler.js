@@ -255,3 +255,119 @@ export const sendResetPasswordMail=async(data)=>{
         `,
     });
 }
+
+
+export const sendJobDecisionMail = async (data) => {
+  const { companyName, collegeName, jobTitle, status, companyEmail } = data;
+
+  const subject =
+    status === "approved"
+      ? `Job Approved by ${collegeName} – CampusHire`
+      : `Job Rejected by ${collegeName} – CampusHire`;
+
+  const html =
+    status === "approved"
+      ? `
+        <h2>Job Posting Approved ✅</h2>
+
+        <p>Hello <strong>${companyName}</strong>,</p>
+
+        <p>
+          We’re pleased to inform you that <strong>${collegeName}</strong> has
+          <strong>approved</strong> your job posting titled
+          <strong>${jobTitle}</strong> on <strong>CampusHire</strong>.
+        </p>
+
+        <p>
+          The job is now visible to students of the college, and you can begin
+          receiving applications through the platform.
+        </p>
+
+        <p>You can now:</p>
+        <ul>
+          <li>Track student applications</li>
+          <li>Shortlist candidates</li>
+          <li>Proceed with interviews</li>
+        </ul>
+
+        <p>
+          We wish you success in finding the right candidates.
+        </p>
+
+        <p>— Team CampusHire</p>
+      `
+      : `
+        <h2>Job Posting Update</h2>
+
+        <p>Hello <strong>${companyName}</strong>,</p>
+
+        <p>
+          This is to inform you that <strong>${collegeName}</strong> has
+          <strong>rejected</strong> your job posting titled
+          <strong>${jobTitle}</strong> on <strong>CampusHire</strong>.
+        </p>
+
+        <p>
+          You may review the job details and submit a revised posting,
+          or explore opportunities with other colleges on the platform.
+        </p>
+
+        <p>
+          We appreciate your interest in hiring through CampusHire.
+        </p>
+
+        <p>— Team CampusHire</p>
+      `;
+
+  await transporter.sendMail({
+    from: `"CampusHire" <${process.env.EMAIL_USER}>`,
+    to: companyEmail,
+    subject:subject,
+    html:html,
+  });
+};
+
+
+
+export const sendMentorJobAssignMail = async (data) => {
+  const { mentorName,jobTitle,companyName,mentorEmail } = data;
+  await transporter.sendMail({
+    from: process.env.EMAIL_USER,
+    to: mentorEmail,
+    subject: `Mentor Assignment: ${jobTitle} – CampusHire`,
+    html: `
+        <h2>You’ve Been Assigned a Job to Manage 🧑‍🏫</h2>
+
+        <p>Hello <strong>${mentorName}</strong>,</p>
+
+        <p>
+            You have been assigned as a mentor for the job
+            <strong>${jobTitle}</strong> posted by
+            <strong>${companyName}</strong> on <strong>CampusHire</strong>.
+        </p>
+
+        <p>
+            As the assigned mentor, your responsibilities include:
+        </p>
+
+        <ul>
+            <li>Reviewing students who apply for this job</li>
+            <li>Approving or rejecting applications</li>
+            <li>Guiding students through the hiring process</li>
+        </ul>
+
+        <p>
+            Please log in to your CampusHire dashboard to start managing
+            applications related to this job.
+        </p>
+
+        <p>
+            If you have any questions, please reach out to your college administrator.
+        </p>
+
+        <p>
+            — Team CampusHire
+        </p>
+        `,
+  });
+};
