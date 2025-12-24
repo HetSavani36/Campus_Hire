@@ -278,6 +278,33 @@ const jobApprovalDecision = asyncHandler(async (req, res) => {
     },
     emailOptions
   );
+
+  if(approval){
+    const students=await prisma.student.findMany({
+      where:{collegeId:college.id},
+      select:{
+        user:{
+          select:{
+            name:true,
+            email:true
+          }
+        }
+      }
+    })
+
+    const jobs = students.map((student) => ({
+      name: "job-notification",
+      data: {
+        studentName: student.user.name,
+        email: student.user.email,
+        companyName: job.company.name,
+        jobTitle: job.title,
+      },
+      opts: emailOptions,
+    }));
+
+    await emailQueue.addBulk(jobs);
+  }
   
 
   res.json(

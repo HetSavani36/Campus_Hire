@@ -371,3 +371,259 @@ export const sendMentorJobAssignMail = async (data) => {
         `,
   });
 };
+
+
+
+export const sendEmployeeCredentialsMail = async (data) => {
+  const { name, email, password, companyName } = data;
+  await transporter.sendMail({
+    from: process.env.EMAIL_USER,
+    to: email,
+    subject: "Your Employee Account Credentials – CampusHire",
+    html: `
+      <h2>Your Employee Account Has Been Created 💼</h2>
+
+      <p>Hello <strong>${name}</strong>,</p>
+
+      <p>
+        Your employee account has been created on <strong>CampusHire</strong>
+        by <strong>${companyName}</strong>.
+        CampusHire helps companies manage campus hiring, collaborate with colleges,
+        and streamline recruitment workflows.
+      </p>
+
+      <p>
+        You can log in using the following credentials:
+      </p>
+
+      <p>
+        <strong>Email:</strong> ${email}<br />
+        <strong>Temporary Password:</strong> ${password}
+      </p>
+
+      <p>
+        For security reasons, please log in and change your password immediately
+        after your first login.
+      </p>
+
+      <p>
+        As an employee, you may be involved in:
+      </p>
+
+      <ul>
+        <li>Managing job postings</li>
+        <li>Reviewing student applications</li>
+        <li>Supporting the campus hiring process</li>
+      </ul>
+
+      <p>
+        If you were not expecting this email, please contact your company administrator.
+      </p>
+
+      <p>
+        — Team CampusHire
+      </p>
+    `
+
+  });
+};
+
+
+
+export const sendCollabRequestRecievedMail = async (data) => {
+  const { collegEmail, collegeName, companyName } = data;
+  await transporter.sendMail({
+    from: process.env.EMAIL_USER,
+    to: collegEmail,
+    subject: `New Collaboration Request from ${companyName} – CampusHire`,
+    html: `
+      <h2>New Collaboration Request Received 🤝</h2>
+
+      <p>Hello <strong>${collegeName}</strong>,</p>
+
+      <p>
+        You have received a new collaboration request on <strong>CampusHire</strong>
+        from <strong>${companyName}</strong>.
+      </p>
+
+      <p>
+        Collaborating with companies allows you to:
+      </p>
+
+      <ul>
+        <li>Share job opportunities with your students</li>
+        <li>Participate in campus hiring initiatives</li>
+        <li>Build long-term industry partnerships</li>
+      </ul>
+
+      <p>
+        Please log in to your CampusHire dashboard to review
+        and take action on this collaboration request.
+      </p>
+
+      <p>
+        If you are not expecting this request, you can safely ignore this email.
+      </p>
+
+      <p>
+        — Team CampusHire
+      </p>
+    `,
+  });
+};
+
+
+export const sendJobAddedMail = async (data) => {
+  const { collegEmail, collegeName, companyName, jobTitle } = data;
+  await transporter.sendMail({
+    from: process.env.EMAIL_USER,
+    to: collegEmail,
+    subject: `New Job Posted by ${companyName} – CampusHire`,
+    html: `
+      <h2>New Job Posted on CampusHire 🆕</h2>
+
+      <p>Hello <strong>${collegeName}</strong>,</p>
+
+      <p>
+        A new job has been posted on <strong>CampusHire</strong> by
+        <strong>${companyName}</strong> for your college.
+      </p>
+
+      <p>
+        <strong>Job Title:</strong> ${jobTitle}
+      </p>
+
+      <p>
+        Please log in to your CampusHire dashboard to view the job details
+        and take the necessary action.
+      </p>
+
+      <p>
+        This helps you keep track of new opportunities being shared with
+        your students.
+      </p>
+
+      <p>
+        — Team CampusHire
+      </p>
+    `,
+  });
+};
+
+
+export const sendStudentApplicationDecisionMail = async (data) => {
+  const { studentName, companyName, jobTitle, status, studentEmail } = data;
+
+  const subject =
+    status === "shortlisted"
+      ? `You’ve Been Shortlisted for ${jobTitle} – CampusHire`
+      : `Application Update for ${jobTitle} – CampusHire`;
+
+  const html =
+    status === "shortlisted"
+      ? `
+        <h2>Congratulations! 🎉</h2>
+
+        <p>Hello <strong>${studentName}</strong>,</p>
+
+        <p>
+          We’re happy to inform you that <strong>${companyName}</strong> has
+          <strong>shortlisted</strong> your application for the position of
+          <strong>${jobTitle}</strong> on <strong>CampusHire</strong>.
+        </p>
+
+        <p>
+          This means you have moved forward in the hiring process.
+          Further steps such as interviews or assessments will be communicated
+          to you soon.
+        </p>
+
+        <p>
+          Please keep an eye on your dashboard and email for updates.
+        </p>
+
+        <p>
+          Best of luck!
+        </p>
+
+        <p>
+          — Team CampusHire
+        </p>
+      `
+      : `
+        <h2>Application Update</h2>
+
+        <p>Hello <strong>${studentName}</strong>,</p>
+
+        <p>
+          Thank you for applying to the position of
+          <strong>${jobTitle}</strong> at <strong>${companyName}</strong>
+          through <strong>CampusHire</strong>.
+        </p>
+
+        <p>
+          After careful consideration, your application was
+          <strong>not selected</strong> at this time.
+        </p>
+
+        <p>
+          We encourage you to continue applying for other opportunities
+          available on CampusHire.
+        </p>
+
+        <p>
+          We wish you the very best in your job search.
+        </p>
+
+        <p>
+          — Team CampusHire
+        </p>
+      `;
+
+  await transporter.sendMail({
+    from: process.env.EMAIL_USER,
+    to: studentEmail,
+    subject: subject,
+    html: html,
+  });
+};
+
+
+
+export const sendStudentJobNotificationMail = async (data) => {
+  const {studentName,studentEmail,companyName,jobTitle } = data;
+  await transporter.sendMail({
+    from: process.env.EMAIL_USER,
+    to: studentEmail,
+    subject: `New Job Opportunity Posted – CampusHire`,
+    html: `
+      <h2>New Job Opportunity Available 🆕</h2>
+
+      <p>Hello <strong>${studentName}</strong>,</p>
+
+      <p>
+        A new job has been posted on <strong>CampusHire</strong> that you may be
+        eligible for.
+      </p>
+
+      <p>
+        <strong>Company:</strong> ${companyName}<br />
+        <strong>Job Title:</strong> ${jobTitle}
+      </p>
+
+      <p>
+        You can log in to your CampusHire dashboard to view the job details
+        and apply if you’re interested.
+      </p>
+
+      <p>
+        Stay proactive and explore opportunities that match your skills
+        and career goals.
+      </p>
+
+      <p>
+        — Team CampusHire
+      </p>
+    `,
+  });
+};

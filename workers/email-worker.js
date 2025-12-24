@@ -1,6 +1,18 @@
 import { Worker } from "bullmq";
 import { redisConnection } from "../config/redis.js";
-import { sendCollabDecisionMail, sendJobDecisionMail, sendMentorCredentialsMail, sendMentorJobAssignMail, sendRegisterCollegeMail, sendRegisterCompanyMail, sendResetPasswordMail } from "./email-handler.js"
+import {
+  sendCollabDecisionMail,
+  sendCollabRequestRecievedMail,
+  sendEmployeeCredentialsMail,
+  sendJobDecisionMail,
+  sendMentorCredentialsMail,
+  sendMentorJobAssignMail,
+  sendRegisterCollegeMail,
+  sendRegisterCompanyMail,
+  sendResetPasswordMail,
+  sendStudentApplicationDecisionMail,
+  sendStudentJobNotificationMail,
+} from "./email-handler.js";
 import { transporter } from "../utils/email-transporter.js";
 
 
@@ -41,6 +53,21 @@ const emailWorker = new Worker(
 
       case "assign-mentor":
         await sendMentorJobAssignMail(data);
+
+      case "employee-credentials":
+        await sendEmployeeCredentialsMail(data);
+
+      case "collab-request":
+        await sendCollabRequestRecievedMail(data);
+
+      case "post-job":
+        await sendJobAddedMail(data);
+
+      case "student-application-decision-company":
+        await sendStudentApplicationDecisionMail(data);
+
+      case "job-notification":
+        await sendStudentJobNotificationMail(data);
 
       default:
         throw new Error(`Unknown job name: ${name}`);
