@@ -4,7 +4,8 @@ import ApiResponse from "../utils/ApiResponse.js";
 
 import { PrismaClient } from "@prisma/client";
 import { generatePassword, hashPassword } from "../utils/password.util.js";
-// import { sendEmail } from "../utils/email-transporter.js";
+import { emailOptions, emailQueue } from "../queues/email-queue.js";
+
 const prisma = new PrismaClient();
 
 const createEmployee = asyncHandler(async (req, res) => {
@@ -27,11 +28,11 @@ const createEmployee = asyncHandler(async (req, res) => {
     throw new ApiError(404, "no college found where this user works");
 
   const password = generatePassword(8);
-  // await sendEmail("connectcampus51@gmail.com", email, password, password);
-  console.log(password);
-
+  
+  
+  
   const hashedPassword = await hashPassword(password);
-
+  
   const result = await prisma.$transaction(async (tx) => {
     const user = await prisma.user.create({
       data: {
@@ -42,7 +43,7 @@ const createEmployee = asyncHandler(async (req, res) => {
         createdAt: hireDate ? new Date(hireDate) : undefined,
       },
     });
-
+    
     const employee = await prisma.employee.create({
       data: {
         userId: user.id,
@@ -70,10 +71,21 @@ const createEmployee = asyncHandler(async (req, res) => {
         },
       },
     });
-
+    
     return { user, employee };
   });
-
+  
+  await emailQueue.add(
+    "employee-credentials",
+    {
+      name: name,
+      email: email,
+      password:password,
+      companyName:company.name
+    },
+    emailOptions
+  );
+  
   res.json(
     new ApiResponse(
       201,
@@ -117,6 +129,16 @@ const collabWithCollege = asyncHandler(async (req, res) => {
     },
   });
 
+  await emailQueue.add(
+    "collab-request",
+    {
+      collegeEmail:college.email,
+      collegeName:college.name,
+      companyName:company.name,
+    },
+    emailOptions
+  );
+
   res.json(
     new ApiResponse(201, collabRequest, "collab request sent successfully")
   );
@@ -128,6 +150,7 @@ const resetPassword = asyncHandler(async (req, res) => {
     where: { id: userId },
     select: {
       id: true,
+      name:true,
       email: true,
       password: true,
       employee: {
@@ -155,14 +178,22 @@ const resetPassword = asyncHandler(async (req, res) => {
   const password = generatePassword(8);
   const hashedPassword = await hashPassword(password);
 
-  // await sendEmail("connectcampus51@gmail.com", user.email, password, password);
-
   await prisma.user.update({
     where: { id: user.id },
     data: {
       password: hashedPassword,
     },
   });
+
+  await emailQueue.add(
+    "reset-password",
+    {
+      name:user.name,
+      email:user.email,
+      role:"employee",
+    },
+    emailOptions
+  );
 
   res.json(new ApiResponse(200, {}, "password reset successfully"));
 });
@@ -207,7 +238,7 @@ const postJob = asyncHandler(async (req, res) => {
   // Validate colleges
   const colleges = await prisma.college.findMany({
     where: { id: { in: collegeIds } },
-    select: { id: true },
+    select: { id: true,name:true,email:true },
   });
   if (colleges.length !== collegeIds.length)
     throw new ApiError(403, "one or more college IDs are invalid");
@@ -272,6 +303,9 @@ const postJob = asyncHandler(async (req, res) => {
           companyId: company.id,
           collegeId,
         },
+        select:{
+            isApproved:true,
+        }
       });
 
       if (exists && !exists.isApproved)
@@ -297,6 +331,17 @@ const postJob = asyncHandler(async (req, res) => {
           collegeId,
           companyId: company.id,
         },
+        select:{
+          id:true,
+          title:true,
+          salary:true,
+          college:{
+            select:{
+              name:true,
+              email:true
+            }
+          }
+        }
       });
 
       // 3. Create job skills
@@ -309,6 +354,17 @@ const postJob = asyncHandler(async (req, res) => {
         data: skillData,
         skipDuplicates: true,
       });
+
+      await emailQueue.add(
+        "post-job",
+        {
+          collegEmail: job.college.name,
+          collegeName: job.college.email,
+          companyName: company.name,
+          jobTitle: job.title,
+        },
+        emailOptions
+      );
 
       jobResults.push(job);
     }
@@ -331,6 +387,30 @@ const makeStudentApplicationDecision = asyncHandler(async (req, res) => {
 
   const application = await prisma.application.findUnique({
     where: { id: applicationId },
+    select:{
+      id:true,
+      status:true,
+      student:{
+        select:{
+          user:{
+            select:{
+              name:true,
+              email:true
+            }
+          }
+        }
+      },
+      job:{
+        select:{
+          title:true,
+          company:{
+            select:{
+              name:true
+            }
+          }
+        }
+      }
+    }
   });
   if (!application) throw new ApiError(404, "no such application found");
 
@@ -347,6 +427,18 @@ const makeStudentApplicationDecision = asyncHandler(async (req, res) => {
       status: status,
     },
   });
+
+  await emailQueue.add(
+    "student-application-decision-company",
+    {
+      studentName: application.student.user.name,
+      companyName:application.job.company.name,
+      jobTitle:application.job.title,
+      status:status,
+      studentEmail: application.student.user.email,
+    },
+    emailOptions
+  );
 
   res.json(
     new ApiResponse(
