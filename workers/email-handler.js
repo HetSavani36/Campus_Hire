@@ -627,3 +627,133 @@ export const sendStudentJobNotificationMail = async (data) => {
     `,
   });
 };
+
+
+
+export const sendStudentMentorDecisionMail = async (data) => {
+  const { studentName, mentorName, companyName, jobTitle, status, studentEmail } =data;
+
+  const subject =
+    status === "approved"
+      ? `Your Application Has Been Approved – CampusHire`
+      : `Application Update – CampusHire`;
+
+  const html =
+    status === "approved"
+      ? `
+        <h2>Application Approved ✅</h2>
+
+        <p>Hello <strong>${studentName}</strong>,</p>
+
+        <p>
+          Your application for the position of
+          <strong>${jobTitle}</strong> at <strong>${companyName}</strong>
+          has been <strong>approved</strong> by your mentor
+          <strong>${mentorName}</strong> on <strong>CampusHire</strong>.
+        </p>
+
+        <p>
+          This means your application has moved forward in the hiring process.
+          Further updates will be shared with you by the company.
+        </p>
+
+        <p>
+          Please keep checking your dashboard for the next steps.
+        </p>
+
+        <p>
+          Best wishes!
+        </p>
+
+        <p>
+          — Team CampusHire
+        </p>
+      `
+      : `
+        <h2>Application Update</h2>
+
+        <p>Hello <strong>${studentName}</strong>,</p>
+
+        <p>
+          Your application for the position of
+          <strong>${jobTitle}</strong> at <strong>${companyName}</strong>
+          has been <strong>rejected</strong> by your mentor
+          <strong>${mentorName}</strong> on <strong>CampusHire</strong>.
+        </p>
+
+        <p>
+          While this application did not move forward, we encourage you
+          to continue applying for other opportunities available on the platform.
+        </p>
+
+        <p>
+          Keep building your profile and skills — better opportunities await.
+        </p>
+
+        <p>
+          — Team CampusHire
+        </p>
+      `;
+
+  await transporter.sendMail({
+    from: process.env.EMAIL_USER,
+    to: studentEmail,
+    subject,
+    html,
+  });
+};
+
+
+export const sendStudentsCredentialsMail = async (data) => {
+  const { name, email, password, rollNo } = data;
+  await transporter.sendMail({
+    from: process.env.EMAIL_USER,
+    to: email,
+    subject: `New Job Opportunity Posted – CampusHire`,
+    html: `
+      <h2>Your Student Account Has Been Created 🎓</h2>
+
+      <p>Hello <strong>${rollNo}- ${name}</strong>,</p>
+
+      <p>
+        Your student account has been successfully created on
+        <strong>CampusHire</strong>.
+        CampusHire helps students explore job opportunities, apply for campus
+        placements, and track their application status in one place.
+      </p>
+
+      <p>
+        You can log in using the following credentials:
+      </p>
+
+      <p>
+        <strong>Email:</strong> ${email}<br />
+        <strong>Temporary Password:</strong> ${password}
+      </p>
+
+      <p>
+        For security reasons, please log in and change your password immediately
+        after your first login.
+      </p>
+
+      <p>
+        Once logged in, you can:
+      </p>
+
+      <ul>
+        <li>View and apply for job postings</li>
+        <li>Track your application status</li>
+        <li>Interact with mentors and placement teams</li>
+      </ul>
+
+      <p>
+        If you were not expecting this email, please contact your college
+        administrator.
+      </p>
+
+      <p>
+        — Team CampusHire
+      </p>
+    `,
+  });
+};

@@ -4,7 +4,6 @@ import ApiResponse from "../utils/ApiResponse.js";
 import { PrismaClient } from "@prisma/client";
 import { generatePassword, hashPassword } from "../utils/password.util.js";
 import { emailOptions, emailQueue } from "../queues/email-queue.js";
-// import { sendEmail } from "../utils/email-transporter.js";
 const prisma = new PrismaClient();
 
 const createMentor = asyncHandler(async (req, res) => {
@@ -292,20 +291,19 @@ const jobApprovalDecision = asyncHandler(async (req, res) => {
       }
     })
 
-    const jobs = students.map((student) => ({
-      name: "job-notification",
-      data: {
-        studentName: student.user.name,
-        email: student.user.email,
-        companyName: job.company.name,
-        jobTitle: job.title,
-      },
-      opts: emailOptions,
-    }));
-
-    await emailQueue.addBulk(jobs);
+    for (const student of students) {
+      await emailQueue.add(
+        "job-notification",
+        {
+          studentName: student.user.name,
+          email: student.user.email,
+          companyName: job.company.name,
+          jobTitle: job.title,
+        },
+        emailOptions
+      );
+    }
   }
-  
 
   res.json(
     new ApiResponse(
