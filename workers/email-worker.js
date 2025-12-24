@@ -7,11 +7,15 @@ import {
   sendJobDecisionMail,
   sendMentorCredentialsMail,
   sendMentorJobAssignMail,
+  sendPasswordChangeMail,
   sendRegisterCollegeMail,
   sendRegisterCompanyMail,
   sendResetPasswordMail,
   sendStudentApplicationDecisionMail,
+  sendStudentJobAppliedMail,
   sendStudentJobNotificationMail,
+  sendStudentMentorDecisionMail,
+  sendStudentsCredentialsMail,
 } from "./email-handler.js";
 import { transporter } from "../utils/email-transporter.js";
 
@@ -41,33 +45,59 @@ const emailWorker = new Worker(
 
       case "mentor-credentials":
         await sendMentorCredentialsMail(data);
+        break;
 
       case "collab-decision":
         await sendCollabDecisionMail(data);
+        break;
 
       case "reset-password":
         await sendResetPasswordMail(data);
+        break;
 
       case "job-decision":
         await sendJobDecisionMail(data);
+        break;
 
       case "assign-mentor":
         await sendMentorJobAssignMail(data);
+        break;
 
       case "employee-credentials":
         await sendEmployeeCredentialsMail(data);
+        break;
 
       case "collab-request":
         await sendCollabRequestRecievedMail(data);
+        break;
 
       case "post-job":
         await sendJobAddedMail(data);
+        break;
 
       case "student-application-decision-company":
         await sendStudentApplicationDecisionMail(data);
+        break;
 
       case "job-notification":
         await sendStudentJobNotificationMail(data);
+        break;
+
+      case "mentor-decision":
+        await sendStudentMentorDecisionMail(data);
+        break;
+
+      case "student-credentials":
+        await sendStudentsCredentialsMail(data);
+        break;
+
+      case "job-applied":
+        await sendStudentJobAppliedMail(data);
+        break;
+
+      case "password-change":
+        await sendPasswordChangeMail(data);
+        break;
 
       default:
         throw new Error(`Unknown job name: ${name}`);

@@ -2,6 +2,7 @@ import { PrismaClient } from "@prisma/client";
 import ApiError from "../utils/ApiError.js";
 import ApiResponse from "../utils/ApiResponse.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
+import { emailOptions, emailQueue } from "../queues/email-queue.js";
 const prisma=new PrismaClient()
 
 const makeStudentApplicationDecision = asyncHandler(async (req, res) => {
@@ -15,6 +16,40 @@ const makeStudentApplicationDecision = asyncHandler(async (req, res) => {
 
     const application = await prisma.application.findUnique({
         where: { id: applicationId },
+        select:{
+          status:true,
+          mentorApproval:true,
+          id:true,
+          student:{
+            select:{
+              user:{
+                select:{
+                  name:true,
+                  email:true
+                }
+              }
+            }
+          },
+          mentor:{
+            select:{
+              user:{
+                select:{
+                  name:true
+                }
+              }
+            }
+          },
+          job:{
+            select:{
+              title:true,
+              company:{
+                select:{
+                  name:true
+                }
+              }
+            }
+          }
+        }
     });
     if (!application) throw new ApiError(404, "no such application found");
 
@@ -29,6 +64,19 @@ const makeStudentApplicationDecision = asyncHandler(async (req, res) => {
             mentorApproval:approval
         },
     });
+
+    await emailQueue.add(
+      "mentor-decision",
+      {
+        studentName: application.student.user.name,
+        mentorName:application.mentor.user.name,
+        companyName:application.job.company.name,
+        jobTitle:application.job.title,
+        status: approval,
+        studentEmail: application.student.user.name,
+      },
+      emailOptions
+    );
 
     res.json(
         new ApiResponse(

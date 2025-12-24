@@ -3,73 +3,117 @@ import { asyncHandler } from "../utils/asyncHandler.js";
 import ApiError from "../utils/ApiError.js";
 import ApiResponse from "../utils/ApiResponse.js";
 import { generatePassword, hashPassword } from "../utils/password.util.js";
-import { parseCSVBuffer } from "../utils/csv_parsing.util.js";
-// import { sendEmail } from "../utils/email-transporter.js";
+import { parseFileBuffer } from "../utils/csv_parsing.util.js";
+import { emailOptions, emailQueue } from "../queues/email-queue.js";
+import csv from "csv-parser";
+
 const prisma = new PrismaClient();
 
 const uploadBulkStudents = asyncHandler(async (req, res) => {
   if (!req.file) throw new ApiError(400, "CSV file is required");
+  
+  // 1️⃣ Parse CSV
+  const rows = await parseFileBuffer(req.file.buffer, req.file.originalname);
 
-  // 1. Parse CSV → JSON array
+  if (!rows || rows.length === 0) {
+    throw new ApiError(400, "CSV file is empty or invalid");
+  }
 
-  const rows = await parseCSVBuffer(req.file.buffer);
+  // 2️⃣ Get college from logged-in user
   const college = await prisma.college.findUnique({
     where: { email: req.user.email },
   });
-  if (!college) throw new ApiError(404, "no such college found");
+
+  if (!college) {
+    throw new ApiError(404, "College not found");
+  }
 
   const createdStudents = [];
+  const skippedStudents = [];
 
+  // 3️⃣ Transaction: create users
   await prisma.$transaction(async (tx) => {
-    for (const row in rows) {
-      if (!Object.hasOwn(rows, row)) continue;
+    for (const row of rows) {
+      console.log(row);
+      
+      if (!row.email || !row.name) {
+        skippedStudents.push({
+          email: row.email || null,
+          reason: "Missing required fields",
+        });
+        continue;
+      }
 
-      const element = rows[row];
-      if (!element.email || !element.name)
-        throw new ApiError(403, "provide all details");
-      const exists = await tx.user.findUnique({
-        where: { email: element.email },
+      const existingUser = await tx.user.findUnique({
+        where: { email: row.email },
       });
-      if (exists)
-        throw new ApiError(403, `account for ${element.email} already exists`);
+
+      if (existingUser) {
+        skippedStudents.push({
+          email: row.email,
+          reason: "User already exists",
+        });
+        continue;
+      }
 
       const password = generatePassword(8);
       const hashedPassword = await hashPassword(password);
 
       const user = await tx.user.create({
         data: {
-          name: element.name,
-          email: element.email,
+          name: row.name,
+          email: row.email,
           password: hashedPassword,
           role: "student",
           metadata: {
             collegeId: college.id,
-            rollNo: element.rollNo,
+            rollNo: row.rollNo || null,
           },
+        },
+        select: {
+          id: true,
+          name: true,
+          email: true,
         },
       });
 
-      user.password = undefined;
-      user.refreshToken = undefined;
-
-      createdStudents.push({ user, password });
+      createdStudents.push({
+        name: user.name,
+        email: user.email,
+        password,
+        rollNo: row.rollNo || null,
+      });
     }
   });
 
-  for (const s of createdStudents) {
-    // await sendEmail(
-    //   "connectcampus51@gmail.com",
-    //   s.user.email,
-    //   s.password,
-    //   s.password
-    // );
+  // 4️⃣ Queue emails AFTER transaction commit
+  if (createdStudents.length > 0) {
+    
+    for (const student of createdStudents) {
+      await emailQueue.add(
+        "student-credentials",
+        {
+          email: student.email,
+          password: student.password,
+          name: student.name,
+          rollNo:student.rollNo
+        },
+        emailOptions
+      );
+    }
+
   }
 
-  res.json(
+  // 5️⃣ API Response (NO passwords exposed)
+  return res.status(201).json(
     new ApiResponse(
       201,
-      createdStudents,
-      "credentials for students created successfully"
+      {
+        createdCount: createdStudents.length,
+        skippedCount: skippedStudents.length,
+        skippedStudents,
+      },
+      "Bulk student upload completed successfully"
     )
   );
 });
@@ -225,6 +269,17 @@ const apply = asyncHandler(async (req, res) => {
 
   const student = await prisma.student.findUnique({
     where: { userId: req.user.id },
+    select:{
+      id:true,
+      resume:true,
+      collegeId:true,
+      user:{
+        select:{
+          name:true,
+          email:true
+        }
+      }
+    }
   });
   if (!student) throw new ApiError(404, "no such student found");
   if (!student.resume)
@@ -299,6 +354,17 @@ const apply = asyncHandler(async (req, res) => {
       },
     },
   });
+
+  await emailQueue.add(
+    "job-applied",
+    { 
+      jobTitle:job.title, 
+      studentName:student.user.name, 
+      companyName:application.job.company.name, 
+      email:student.user.email 
+    },
+    emailOptions
+  );
 
   res.json(new ApiResponse(201, application, "your have applied to this job"));
 });
