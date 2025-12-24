@@ -269,6 +269,17 @@ const apply = asyncHandler(async (req, res) => {
 
   const student = await prisma.student.findUnique({
     where: { userId: req.user.id },
+    select:{
+      id:true,
+      resume:true,
+      collegeId:true,
+      user:{
+        select:{
+          name:true,
+          email:true
+        }
+      }
+    }
   });
   if (!student) throw new ApiError(404, "no such student found");
   if (!student.resume)
@@ -343,6 +354,17 @@ const apply = asyncHandler(async (req, res) => {
       },
     },
   });
+
+  await emailQueue.add(
+    "job-applied",
+    { 
+      jobTitle:job.title, 
+      studentName:student.user.name, 
+      companyName:application.job.company.name, 
+      email:student.user.email 
+    },
+    emailOptions
+  );
 
   res.json(new ApiResponse(201, application, "your have applied to this job"));
 });

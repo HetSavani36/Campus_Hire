@@ -7,10 +7,12 @@ import {
   sendJobDecisionMail,
   sendMentorCredentialsMail,
   sendMentorJobAssignMail,
+  sendPasswordChangeMail,
   sendRegisterCollegeMail,
   sendRegisterCompanyMail,
   sendResetPasswordMail,
   sendStudentApplicationDecisionMail,
+  sendStudentJobAppliedMail,
   sendStudentJobNotificationMail,
   sendStudentMentorDecisionMail,
   sendStudentsCredentialsMail,
@@ -87,6 +89,14 @@ const emailWorker = new Worker(
 
       case "student-credentials":
         await sendStudentsCredentialsMail(data);
+        break;
+
+      case "job-applied":
+        await sendStudentJobAppliedMail(data);
+        break;
+
+      case "password-change":
+        await sendPasswordChangeMail(data);
         break;
 
       default:

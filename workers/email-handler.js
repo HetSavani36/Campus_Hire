@@ -757,3 +757,86 @@ export const sendStudentsCredentialsMail = async (data) => {
     `,
   });
 };
+
+
+
+export const sendStudentJobAppliedMail = async (data) => {
+  const { jobTitle, studentName, companyName,email } = data;
+  await transporter.sendMail({
+    from: process.env.EMAIL_USER,
+    to: email,
+    subject: `Application Submitted – ${jobTitle} | CampusHire`,
+    html: `
+      <h2>Application Submitted Successfully 📄</h2>
+
+      <p>Hello <strong>${studentName}</strong>,</p>
+
+      <p>
+        You have successfully applied for the position of
+        <strong>${jobTitle}</strong> at <strong>${companyName}</strong>
+        through <strong>CampusHire</strong>.
+      </p>
+
+      <p>
+        Your application is now under review. You can track the status of
+        your application anytime from your CampusHire dashboard.
+      </p>
+
+      <p>
+        Staying updated helps you prepare for next steps such as interviews
+        or assessments.
+      </p>
+
+      <p>
+        We wish you the best in your application process.
+      </p>
+
+      <p>
+        — Team CampusHire
+      </p>
+    `,
+  });
+};
+
+
+export const sendPasswordChangeMail = async (data) => {
+  const { name, email } = data;
+  await transporter.sendMail({
+    from: process.env.EMAIL_USER,
+    to: email,
+    subject: `Your CampusHire Password Has Been Changed`,
+    html: `
+      <h2>Password Changed Successfully 🔐</h2>
+
+      <p>Hello <strong>${name}</strong>,</p>
+
+      <p>
+        This is a confirmation that the password for your
+        <strong>CampusHire</strong> account has been successfully changed.
+      </p>
+
+      <p>
+        If you made this change, no further action is required.
+      </p>
+
+      <p>
+        If you did <strong>not</strong> change your password, please take the
+        following steps immediately:
+      </p>
+
+      <ul>
+        <li>Log in and reset your password again</li>
+        <li>Contact your administrator or support team</li>
+      </ul>
+
+      <p>
+        Keeping your account secure helps protect your data and activity
+        on CampusHire.
+      </p>
+
+      <p>
+        — Team CampusHire
+      </p>
+    `,
+  });
+};
