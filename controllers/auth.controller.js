@@ -220,6 +220,7 @@ const logout = asyncHandler(async (req, res) => {
   await prisma.user.update({
     where: { id: req.user.id },
     data: { refreshToken: "" },
+    select:{id:true}
   });
 
   console.log("logout");
@@ -240,6 +241,10 @@ const refreshController = asyncHandler(async (req, res) => {
 
   const user = await prisma.user.findUnique({
     where: { id: decoded.id },
+    select:{
+      id:true,
+      refreshToken:true
+    }
   });
   if (!user) throw new ApiError(404, "user not found");
 
@@ -255,7 +260,6 @@ const refreshController = asyncHandler(async (req, res) => {
     data: { refreshToken: refreshToken },
   });
 
-  user.password = undefined;
   user.refreshToken = undefined;
 
   res
@@ -267,11 +271,16 @@ const refreshController = asyncHandler(async (req, res) => {
 const getMe = asyncHandler(async (req, res) => {
   const user = await prisma.user.findUnique({
     where: { id: req.user.id },
+    select:{
+      createdAt:true,
+      email:true,
+      id:true,
+      name:true,
+      role:true,
+      hasCompletedProfile:true
+    }
   });
   if (!user) throw new ApiError(404, "user not found");
-
-  user.password = undefined;
-  user.refreshToken = undefined;
 
   res.json(new ApiResponse(200, user, "user profile"));
 });

@@ -22,6 +22,7 @@ const uploadBulkStudents = asyncHandler(async (req, res) => {
   // 2️⃣ Get college from logged-in user
   const college = await prisma.college.findUnique({
     where: { email: req.user.email },
+    select:{id:true}
   });
 
   if (!college) {
@@ -34,7 +35,6 @@ const uploadBulkStudents = asyncHandler(async (req, res) => {
   // 3️⃣ Transaction: create users
   await prisma.$transaction(async (tx) => {
     for (const row of rows) {
-      console.log(row);
       
       if (!row.email || !row.name) {
         skippedStudents.push({
@@ -46,9 +46,15 @@ const uploadBulkStudents = asyncHandler(async (req, res) => {
 
       const existingUser = await tx.user.findUnique({
         where: { email: row.email },
+        select:{id:true}
       });
 
-      if (existingUser) {
+      const existingStudent = await tx.student.findUnique({
+        where: { email: row.email },
+        select: { id: true },
+      });
+
+      if (existingUser || existingStudent) {
         skippedStudents.push({
           email: row.email,
           reason: "User already exists",
@@ -105,7 +111,7 @@ const uploadBulkStudents = asyncHandler(async (req, res) => {
   }
 
   // 5️⃣ API Response (NO passwords exposed)
-  return res.status(201).json(
+  return res.json(
     new ApiResponse(
       201,
       {
@@ -126,6 +132,11 @@ const createProfile = asyncHandler(async (req, res) => {
 
   const user = await prisma.user.findUnique({
     where: { id: req.user.id },
+    select:{
+      id:true,
+      metadata:true,
+      hasCompletedProfile:true
+    }
   });
   if (!user) throw new ApiError(404, "no such user found");
 
@@ -146,6 +157,7 @@ const createProfile = asyncHandler(async (req, res) => {
         resume: null,
         aboutMe: aboutMe ?? null,
       },
+      select:{id:true}
     }),
     prisma.user.update({
       where: { id: user.id },
@@ -223,6 +235,7 @@ const addSkill = asyncHandler(async (req, res) => {
 
   const student = await prisma.student.findUnique({
     where: { userId: req.user.id },
+    select: { id: true },
   });
   if (!student) throw new ApiError(404, "no such student found");
 
@@ -237,6 +250,7 @@ const addSkill = asyncHandler(async (req, res) => {
           skillId: exists.id,
         },
       },
+      select:{skillId:true}
     });
     if (studentSkillExists) throw new ApiError(403, "skill already added");
 
@@ -245,6 +259,7 @@ const addSkill = asyncHandler(async (req, res) => {
         studentId: student.id,
         skillId: exists.id,
       },
+      select:{id:true}
     });
     return res.json(new ApiResponse(201, exists, "skill added successfully"));
   }
@@ -259,6 +274,7 @@ const addSkill = asyncHandler(async (req, res) => {
       studentId: student.id,
       skillId: skill.id,
     },
+    select:{skillId:true}
   });
 
   res.json(new ApiResponse(201, skill, "skill added successfully"));
@@ -287,6 +303,15 @@ const apply = asyncHandler(async (req, res) => {
 
   const job = await prisma.job.findUnique({
     where: { id: jobId },
+    select:{
+      id:true,
+      collegeId:true,
+      status:true,
+      isApproved:true,
+      dueDate:true,
+      mentorId:true,
+      title:true
+    }
   });
   if (!job) throw new ApiError(404, "no such job found");
 
@@ -304,6 +329,7 @@ const apply = asyncHandler(async (req, res) => {
       studentId: student.id,
       jobId: job.id,
     },
+    select:{status:true}
   });
   if (exists && exists.status === "pending")
     throw new ApiError(
@@ -451,6 +477,7 @@ const getJobDetail = asyncHandler(async (req, res) => {
 
   const student = await prisma.student.findUnique({
     where: { userId: req.user.id },
+    select:{collegeId:true}
   });
   if (!student) throw new ApiError(404, "no such student found");
 

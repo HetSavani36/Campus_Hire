@@ -11,7 +11,13 @@ const changePassword=asyncHandler(async(req,res)=>{
     if(!oldPassword || !newPassword) throw new ApiError(403,"please provide all details")
 
     const user=await prisma.user.findUnique({
-        where:{id:req.user.id}
+        where:{id:req.user.id},
+        select:{
+          id:true,
+          password:true,
+          name:true,
+          email:true
+        }
     }) 
 
     const isPasswordCorrect=await comparePassword(oldPassword,user.password)
@@ -20,7 +26,8 @@ const changePassword=asyncHandler(async(req,res)=>{
     const hashedPassword=await hashPassword(newPassword)
     await prisma.user.update({
         where:{id:user.id},
-        data:{password:hashedPassword}
+        data:{password:hashedPassword},
+        select:{id:true}
     })
 
     await emailQueue.add(
