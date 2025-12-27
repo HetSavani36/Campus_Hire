@@ -92,7 +92,11 @@ const getAllJobs=asyncHandler(async(req,res)=>{
     const {filter="current"}=req.query
 
     const mentor=await prisma.mentor.findUnique({
-        where:{userId:req.user.id}
+        where:{userId:req.user.id},
+        select:{
+          id:true,
+          collegeId:true
+        }
     })
     if(!mentor) throw new ApiError(404,"no such mentor found")
 
@@ -131,6 +135,10 @@ const getJobDetails = asyncHandler(async (req, res) => {
 
   const mentor = await prisma.mentor.findUnique({
     where: { userId: req.user.id },
+    select:{
+      id:true,
+      collegeId:true
+    }
   });
   if (!mentor) throw new ApiError(404, "no such mentor found");
 

@@ -16,6 +16,7 @@ const createEmployee = asyncHandler(async (req, res) => {
     where: {
       email: email,
     },
+    select:{id:true}
   });
   if (exists) throw new ApiError(403, "user with this email already exists");
 
@@ -23,14 +24,14 @@ const createEmployee = asyncHandler(async (req, res) => {
     where: {
       email: req.user.email,
     },
+    select:{
+      id:true,
+      name:true
+    }
   });
-  if (!company)
-    throw new ApiError(404, "no college found where this user works");
+  if (!company) throw new ApiError(404, "no college found where this user works");
 
   const password = generatePassword(8);
-  
-  
-  
   const hashedPassword = await hashPassword(password);
   
   const result = await prisma.$transaction(async (tx) => {
@@ -42,6 +43,7 @@ const createEmployee = asyncHandler(async (req, res) => {
         role: "employee",
         createdAt: hireDate ? new Date(hireDate) : undefined,
       },
+      select:{id:true}
     });
     
     const employee = await prisma.employee.create({
@@ -89,7 +91,7 @@ const createEmployee = asyncHandler(async (req, res) => {
   res.json(
     new ApiResponse(
       201,
-      { employee: result.employee },
+      result.employee,
       "employee created successfully"
     )
   );
@@ -101,11 +103,20 @@ const collabWithCollege = asyncHandler(async (req, res) => {
 
   const company = await prisma.company.findUnique({
     where: { email: req.user.email },
+    select:{
+      id:true,
+      name:true
+    }
   });
   if (!company) throw new ApiError(404, "no such company found");
 
   const college = await prisma.college.findUnique({
     where: { id: collegeId },
+    select:{
+      id:true,
+      name:true,
+      email:true
+    }
   });
   if (!college) throw new ApiError(404, "no such college found");
 
@@ -116,6 +127,7 @@ const collabWithCollege = asyncHandler(async (req, res) => {
         companyId: company.id,
       },
     },
+    select:{status:true}
   });
   if (exists && exists.status === "accepted")
     throw new ApiError(403, "request already accepted");
@@ -127,6 +139,13 @@ const collabWithCollege = asyncHandler(async (req, res) => {
       collegeId: collegeId,
       companyId: company.id,
     },
+    select:{
+      id:true,
+      createdAt:true,
+      collegeId:true,
+      companyId:true,
+      status:true,
+    }
   });
 
   await emailQueue.add(
@@ -204,14 +223,14 @@ const addSkill = asyncHandler(async (req, res) => {
 
   const exists = await prisma.skill.findUnique({
     where: { name: name.toUpperCase() },
+    select:{id:true}
   });
-  if (exists)
-    return res.json(new ApiResponse(201, exists, "skill already exists"));
+  if (exists) return res.json(new ApiResponse(201, exists, "skill already exists"));
 
   const skill = await prisma.skill.create({
     data: {
       name: name.toUpperCase(),
-    },
+    }
   });
 
   res.json(new ApiResponse(201, skill, "new skill added"));
@@ -232,6 +251,11 @@ const postJob = asyncHandler(async (req, res) => {
 
   const company = await prisma.company.findUnique({
     where: { email: req.user.email },
+    select:{
+      id:true,
+      name:true,
+      address:true
+    }
   });
   if (!company) throw new ApiError(404, "no such company found");
 
@@ -378,10 +402,8 @@ const postJob = asyncHandler(async (req, res) => {
 const makeStudentApplicationDecision = asyncHandler(async (req, res) => {
   const { applicationId } = req.params;
   const { result } = req.params;
-  if (!applicationId || !result)
-    throw new ApiError(403, "please provide studentId and your decision");
-  if (result !== "1" && result !== "0")
-    throw new ApiError(403, "please provide proper decision in either 0 or 1");
+  if (!applicationId || !result) throw new ApiError(403, "please provide studentId and your decision");
+  if (result !== "1" && result !== "0") throw new ApiError(403, "please provide proper decision in either 0 or 1");
 
   const status = result === "1" ? "shortlisted" : "rejected";
 
@@ -454,6 +476,7 @@ const getEmployeesList = asyncHandler(async (req, res) => {
 
   const company = await prisma.company.findUnique({
     where: { email: req.user.email },
+    select:{id:true}
   });
   if (!company) throw new ApiError(404, "no such company found");
 
@@ -493,6 +516,7 @@ const getEmployeeDetail = asyncHandler(async (req, res) => {
 
   const company = await prisma.company.findUnique({
     where: { email: req.user.email },
+    select:{id:true}
   });
   if (!company) throw new ApiError(404, "no such company found");
 
@@ -547,6 +571,7 @@ const getAllColleges = asyncHandler(async (req, res) => {
 
   const company = await prisma.company.findUnique({
     where: { email: req.user.email },
+    select:{id:true}
   });
   if (!company) throw new ApiError(404, "no such company found");
 
@@ -651,6 +676,7 @@ const getCollegeDetails = async (req, res) => {
 const getAllJobs = asyncHandler(async (req, res) => {
   const company = await prisma.company.findUnique({
     where: { email: req.user.email },
+    select:{id:true}
   });
   if (!company) throw new ApiError(404, "no such company found");
 
@@ -708,6 +734,7 @@ const getJobDetails = asyncHandler(async (req, res) => {
 
   const company = await prisma.company.findUnique({
     where: { email: req.user.email },
+    select:{id:true}
   });
   if (!company) throw new ApiError(404, "no such company found");
 
@@ -797,6 +824,7 @@ const getJobDetails = asyncHandler(async (req, res) => {
 const exportEmployees = asyncHandler(async (req, res) => {
   const company = await prisma.company.findUnique({
     where: { email: req.user.email },
+    select:{id:true}
   });
   if (!company) throw new ApiError(404, "no such company found");
 
