@@ -482,8 +482,8 @@ const getMentorsList = asyncHandler(async (req, res) => {
     jobs: mentor.jobs,
   }));
 
-  if (filter === "available")
-    mentors = mentors.filter((mentor) => mentor.jobs.length === 0);
+  if(filter==="all") {}
+  else if (filter === "available") mentors = mentors.filter((mentor) => mentor.jobs.length === 0);
   else mentors = mentors.filter((mentor) => mentor.jobs.length > 0);
 
   res.json(new ApiResponse(200, mentors, "all mentors fetched successfully"));
@@ -616,38 +616,80 @@ const getCompanyDetails = asyncHandler(async (req, res) => {
 });
 
 const getAllJobRequests = asyncHandler(async (req, res) => {
-  let { isApproved = "false" } = req.query;
-  isApproved = isApproved === "true";
+  let { filter = "pending" } = req.query;
 
   const college = await prisma.college.findUnique({
     where: { email: req.user.email },
-    select:{id:true}
+    select: { id: true },
   });
   if (!college) throw new ApiError(404, "no such college found");
 
-  let whereClause = {
+  const startOfToday = new Date();
+  startOfToday.setHours(0, 0, 0, 0);
+
+  const whereClause = {
     collegeId: college.id,
-    isApproved: isApproved,
     status: "active",
   };
-  if (!isApproved) whereClause.dueDate = { gte: new Date() };
 
-  const jobRequests = await prisma.job.findMany({
+  if (filter === "pending") {
+    whereClause.isApproved = false;
+    whereClause.dueDate = { gte: startOfToday };
+  }
+
+  else if (filter === "current") {
+    whereClause.isApproved = true;
+    whereClause.dueDate = { gte: startOfToday };
+    whereClause.mentor = { isNot: null };
+  }
+
+  else if (filter === "past") {
+    whereClause.isApproved = true;
+    whereClause.dueDate = { lt: startOfToday };
+    whereClause.mentor = { isNot: null };
+  }
+
+  else if (filter === "assign_mentor") {
+    whereClause.isApproved = true;
+    whereClause.dueDate = { gte: startOfToday };
+    whereClause.mentor = { is: null };
+  }
+
+  else {
+    throw new ApiError(400, "invalid filter");
+  }
+
+  let jobRequests = await prisma.job.findMany({
     where: whereClause,
     select: {
       id: true,
       title: true,
       salary: true,
       dueDate: true,
-      companyId: true,
       isApproved: true,
       createdAt: true,
-      mentorId: true,
+      company: {
+        select: { name: true },
+      },
+      mentor: {
+        select: {
+          user: {
+            select: { name: true },
+          },
+        },
+      },
     },
   });
 
+  jobRequests = jobRequests.map(job => ({
+    ...job,
+    companyName: job.company.name,
+    mentorName: job.mentor?.user?.name ?? null,
+  }));
+
   res.json(new ApiResponse(200, jobRequests, "job requests"));
 });
+
 
 const getJobDetails = asyncHandler(async (req, res) => {
   const { jobId } = req.params;
@@ -735,6 +777,47 @@ const getJobDetails = asyncHandler(async (req, res) => {
   res.json(new ApiResponse(200, formattedJob, "job detail"));
 });
 
+
+const exportMentors = asyncHandler(async (req, res) => {
+  const college = await prisma.college.findUnique({
+    where: { email: req.user.email },
+    select: { id: true },
+  });
+  if (!college) throw new ApiError(404, "no such college found");
+
+  const mentors = await prisma.mentor.findMany({
+    where: { collegeId: college.id },
+    select: {
+      id: true,
+      user: {
+        select: {
+          name: true,
+          email: true,
+          createdAt: true,
+        },
+      },
+    },
+  });
+
+  const data = [
+    ["ID", "NAME", "EMAIL", "HIRE DATE"],
+    ...mentors.map((e) => [
+      e.id,
+      e.user.name,
+      e.user.email,
+      e.user.createdAt.toISOString(), // IMPORTANT
+    ]),
+  ];
+
+  const csv = data.map((row) => row.join(",")).join("\n");
+
+  res
+    .setHeader("Content-Type", "text/csv; charset=utf-8")
+    .setHeader("Content-Disposition", "attachment; filename=mentors.csv")
+    .setHeader("Cache-Control", "no-store")
+    .send("\uFEFF" + csv);
+});
+
 export {
   createMentor,
   collabDecision,
@@ -747,4 +830,5 @@ export {
   getCompanyDetails,
   getAllJobRequests,
   getJobDetails,
+  exportMentors,
 };
