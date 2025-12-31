@@ -341,39 +341,29 @@ const jobApprovalDecision = asyncHandler(async (req, res) => {
 const assignMentor = asyncHandler(async (req, res) => {
   const { mentorId } = req.body;
   const { jobId } = req.params;
+
   if (!mentorId || !jobId)
     throw new ApiError(403, "please provide all details");
 
   const college = await prisma.college.findUnique({
     where: { email: req.user.email },
-    select:{id:true}
+    select: { id: true },
   });
   if (!college) throw new ApiError(404, "no such college found");
 
+  // ✅ FIXED: find mentor by UNIQUE id
   const mentor = await prisma.mentor.findUnique({
-    where: {
-      collegeId: college.id,
-      ...(search && {
-        user: {
-          is: {
-            OR: [
-              { name: { contains: search, mode: "insensitive" } },
-              { email: { contains: search, mode: "insensitive" } },
-            ],
-          },
+    where: { id: mentorId },
+    select: {
+      id: true,
+      collegeId: true,
+      user: {
+        select: {
+          name: true,
+          email: true,
         },
-      }),
+      },
     },
-    select:{
-      id:true,
-      collegeId:true,
-      user:{
-        select:{
-          name:true,
-          email:true
-        }
-      }
-    }
   });
   if (!mentor) throw new ApiError(404, "no such mentor found");
 
@@ -382,54 +372,56 @@ const assignMentor = asyncHandler(async (req, res) => {
 
   const job = await prisma.job.findUnique({
     where: { id: jobId },
-    select:{
-      collegeId:true,
-      dueDate:true,
-      status:true,
-      isApproved:true,
-      id:true,
-      company:{
-        select:{
-          name:true
-        }
-      }
-    }
+    select: {
+      id: true,
+      collegeId: true,
+      dueDate: true,
+      status: true,
+      isApproved: true,
+      title: true,
+      company: {
+        select: { name: true },
+      },
+    },
   });
   if (!job) throw new ApiError(404, "no such job found");
+
   if (college.id !== job.collegeId)
     throw new ApiError(
       403,
       "cant assign mentor to job outside your organization"
     );
+
   if (job.status === "closed")
     throw new ApiError(403, "cant assign mentor to closed job");
+
   if (job.dueDate < new Date())
     throw new ApiError(403, "cant assign mentor to expired job");
+
   if (!job.isApproved)
     throw new ApiError(403, "cant assign mentor to un-approved job");
 
-  const updatedJob = await prisma.job.update({
+  await prisma.job.update({
     where: { id: jobId },
-    data: {
-      mentorId: mentorId,
-    },
+    data: { mentorId },
   });
 
   await emailQueue.add(
     "assign-mentor",
     {
-      mentorName:mentor.user.name,
-      jobTitle:job.title,
-      companyName:job.company.name,
-      mentorEmail:mentor.user.email,
+      mentorName: mentor.user.name,
+      jobTitle: job.title,
+      companyName: job.company.name,
+      mentorEmail: mentor.user.email,
     },
     emailOptions
   );
+  console.log(mentor);
+  
 
-  res.json(
-    new ApiResponse(200, mentor, "mentor assigned/updated successfully")
-  );
+  res.json(new ApiResponse(200, mentor, "mentor assigned successfully"));
 });
+
 
 const getMentorsList = asyncHandler(async (req, res) => {
   const { filter = "all" } = req.query;
@@ -616,8 +608,8 @@ const getCompanyDetails = asyncHandler(async (req, res) => {
 });
 
 const getAllJobRequests = asyncHandler(async (req, res) => {
-  let { filter = "pending" } = req.query;
-
+  let { filter = "PENDING" } = req.query;
+  
   const college = await prisma.college.findUnique({
     where: { email: req.user.email },
     select: { id: true },
@@ -632,29 +624,28 @@ const getAllJobRequests = asyncHandler(async (req, res) => {
     status: "active",
   };
 
-  if (filter === "pending") {
+  if (filter === "PENDING") {
     whereClause.isApproved = false;
     whereClause.dueDate = { gte: startOfToday };
   }
 
-  else if (filter === "current") {
+  else if (filter === "CURRENT") {
     whereClause.isApproved = true;
     whereClause.dueDate = { gte: startOfToday };
     whereClause.mentor = { isNot: null };
   }
 
-  else if (filter === "past") {
+  else if (filter === "PAST") {
     whereClause.isApproved = true;
     whereClause.dueDate = { lt: startOfToday };
     whereClause.mentor = { isNot: null };
   }
 
-  else if (filter === "assign_mentor") {
+  else if (filter === "ASSIGN_MENTOR") {
     whereClause.isApproved = true;
     whereClause.dueDate = { gte: startOfToday };
     whereClause.mentor = { is: null };
   }
-
   else {
     throw new ApiError(400, "invalid filter");
   }
@@ -681,11 +672,16 @@ const getAllJobRequests = asyncHandler(async (req, res) => {
     },
   });
 
-  jobRequests = jobRequests.map(job => ({
-    ...job,
+  jobRequests = jobRequests.map((job) => ({
+    id: job.id,
+    title: job.title,
+    salary: job.salary,
+    deadline: job.dueDate, // 🔥 rename here
     companyName: job.company.name,
     mentorName: job.mentor?.user?.name ?? null,
+    status:filter
   }));
+
 
   res.json(new ApiResponse(200, jobRequests, "job requests"));
 });
