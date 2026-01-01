@@ -693,7 +693,7 @@ const getAllJobs = asyncHandler(async (req, res) => {
   if (filter === "accepted") whereClause.isApproved = true;
   if (filter === "pending") whereClause.isApproved = false;
 
-  const jobs = await prisma.job.findMany({
+  let jobs = await prisma.job.findMany({
     where: whereClause,
     select: {
       id: true,
@@ -710,6 +710,11 @@ const getAllJobs = asyncHandler(async (req, res) => {
       },
     },
   });
+  jobs=jobs.map((job)=>({
+    ...job,
+    status:filter
+  }))
+console.log(jobs);
 
   res.json(new ApiResponse(200, jobs, "all jobs"));
 });
