@@ -285,6 +285,12 @@ const jobApprovalDecision = asyncHandler(async (req, res) => {
       data: { isApproved: true },
     });
   } else {
+    await prisma.jobSkill.deleteMany({
+      where:{jobId:job.id}
+    })
+    await prisma.application.deleteMany({
+      where:{jobId:job.id}
+    })
     await prisma.job.delete({
       where: { id: job.id },
     });
