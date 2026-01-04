@@ -10,6 +10,8 @@ import {
   verifyRefreshToken,
 } from "../utils/jwt.util.js";
 import { emailOptions, emailQueue } from "../queues/email-queue.js";
+import crypto from "crypto"
+
 const prisma = new PrismaClient();
 
 const registerCollege = asyncHandler(async (req, res) => {
@@ -61,15 +63,7 @@ const registerCollege = asyncHandler(async (req, res) => {
     }),
   ]);
 
-  const refreshToken = generateRefreshToken(collegeAdmin);
-
-  await prisma.user.update({
-    where: { id: collegeAdmin.id },
-    data: { refreshToken: refreshToken },
-  });
-
   collegeAdmin.password = undefined;
-  collegeAdmin.refreshToken = undefined;
 
   await emailQueue.add(
     "register-college",
@@ -159,15 +153,7 @@ const registerCompany = asyncHandler(async (req, res) => {
     }),
   ]);
 
-  const refreshToken = generateRefreshToken(companyAdmin);
-
-  await prisma.user.update({
-    where: { id: companyAdmin.id },
-    data: { refreshToken: refreshToken },
-  });
-
   companyAdmin.password = undefined;
-  companyAdmin.refreshToken = undefined;
 
     await emailQueue.add(
       "register-company",
@@ -198,17 +184,46 @@ const login = asyncHandler(async (req, res) => {
 
   const isPasswordCorrect = await comparePassword(password, user.password);
   if (!isPasswordCorrect) throw new ApiError(403, "incorrect password");
+  
+  const session = await prisma.session.create({
+    data: {
+      userId: user.id,
+      userAgent: req.headers["user-agent"],
+      ip: req.ip,
+      expiresAt: new Date(Date.now() + 7*24*60*60*1000),
+    },
+  });
+  
+  const refreshToken=generateRefreshToken(
+    {
+      userId:user.id,
+      sessionId:session.id
+    }
+  )
+  
+  const refreshTokenHash=crypto
+    .createHash("sha256")
+    .update(refreshToken)
+    .digest("hex")
 
-  const refreshToken = generateRefreshToken(user);
-  const accessToken = generateAccessToken(user);
+  await prisma.session.update({
+    where:{id:session.id},
+    data:{
+      refreshTokenHash:refreshTokenHash
+    }
+  })
 
-  await prisma.user.update({
-    where: { id: user.id },
-    data: { refreshToken: refreshToken },
+  await prisma.session.deleteMany({
+    where: {
+      userId: user.id,
+      expiresAt: { lt: new Date() },
+    },
   });
 
+
   user.password = undefined;
-  user.refreshToken = undefined;
+  
+  const accessToken = generateAccessToken(user);
 
   res
     .cookie("accessToken", accessToken, options)
@@ -217,13 +232,19 @@ const login = asyncHandler(async (req, res) => {
 });
 
 const logout = asyncHandler(async (req, res) => {
-  await prisma.user.update({
-    where: { id: req.user.id },
-    data: { refreshToken: "" },
-    select:{id:true}
-  });
+  let decoded;
+  try {
+    decoded = verifyRefreshToken(req.cookies.refreshToken);
+  } catch (err) {
+    // ignore
+  }
 
-  console.log("logout");
+  if (decoded?.sessionId) {
+    await prisma.session.updateMany({
+      where: { id: decoded.sessionId },
+      data: { revokedAt: new Date() },
+    });
+  }
 
   res
     .clearCookie("accessToken", options)
@@ -233,38 +254,62 @@ const logout = asyncHandler(async (req, res) => {
 
 const refreshController = asyncHandler(async (req, res) => {
   const incomingRefreshToken = req.cookies?.refreshToken;
-  if (!incomingRefreshToken)
-    throw new ApiError(401, "no refresh token provided");
+  if (!incomingRefreshToken) throw new ApiError(401, "no refresh token provided");
+
+  const incomingRefreshTokenHash=crypto
+    .createHash("sha256")
+    .update(incomingRefreshToken)
+    .digest("hex")
 
   const decoded = verifyRefreshToken(incomingRefreshToken);
-  if (!decoded?.id) throw new ApiError(403, "invalid refresh token");
+  if (decoded.type !== "refresh") throw new ApiError(403, "invalid token type");
+
+  const session=await prisma.session.findUnique({
+    where:{id:decoded.sessionId}
+  })
+  if(!session) throw new ApiError(404,"no such session found")
+  if (!session.refreshTokenHash) throw new ApiError(403, "session not initialized");
+  if (session.revokedAt) throw new ApiError(403, "session revoked");
+  if(session.expiresAt<new Date()) throw new ApiError(403,"session expires")
+  if (incomingRefreshTokenHash !== session.refreshTokenHash) {
+    await prisma.session.update({
+      where: { id: session.id },
+      data: { revokedAt: new Date() },
+    });
+    throw new ApiError(401, "token mismatch");
+  }
+
+  const incomingHash = crypto
+    .createHash("sha256")
+    .update(incomingRefreshToken)
+    .digest("hex");
+
+  if(incomingHash!==session.refreshTokenHash) throw new ApiError(401,"token mismatch")
 
   const user = await prisma.user.findUnique({
     where: { id: decoded.id },
-    select:{
-      id:true,
-      refreshToken:true
-    }
   });
   if (!user) throw new ApiError(404, "user not found");
 
-  if (!user.refreshToken) throw new ApiError(403, "refresh token not found");
-  if (incomingRefreshToken !== user.refreshToken)
-    throw new ApiError(403, "refresh token mismatch");
-
-  const refreshToken = generateRefreshToken(user);
-  const accessToken = generateAccessToken(user);
-
-  await prisma.user.update({
-    where: { id: user.id },
-    data: { refreshToken: refreshToken },
+  
+  const newRefreshToken = generateRefreshToken({ userId:user.id, sessionId:session.id });
+  const newHash=crypto
+    .createHash("sha256")
+    .update(newRefreshToken)
+    .digest("hex")
+    
+  await prisma.session.update({
+    where: { id: session.id },
+    data: {
+      refreshTokenHash: newHash,
+      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+    },
   });
-
-  user.refreshToken = undefined;
-
+  
+  const accessToken = generateAccessToken(user);
   res
     .cookie("accessToken", accessToken, options)
-    .cookie("refreshToken", refreshToken, options)
+    .cookie("refreshToken", newRefreshToken, options)
     .json(new ApiResponse(200, {}, "refreshed token successfully"));
 });
 

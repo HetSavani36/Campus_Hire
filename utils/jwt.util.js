@@ -15,13 +15,12 @@ const generateAccessToken = (user) => {
   );
 };
 
-const generateRefreshToken = (user) => {
+const generateRefreshToken = ({userId,sessionId}) => {
   return jwt.sign(
     {
-      id: user.id,
-      name: user.name,
-      role: user.role,
-      hasCompletedProfile: user.hasCompletedProfile,
+      id: userId,
+      sessionId:sessionId,
+      type:"refresh"
     },
     process.env.REFRESH_TOKEN_SECRET_KEY,
     {

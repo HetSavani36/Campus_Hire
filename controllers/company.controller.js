@@ -714,7 +714,6 @@ const getAllJobs = asyncHandler(async (req, res) => {
     ...job,
     status:filter
   }))
-console.log(jobs);
 
   res.json(new ApiResponse(200, jobs, "all jobs"));
 });

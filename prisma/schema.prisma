@@ -8,20 +8,20 @@ datasource db {
 }
 
 model User {
-  id           String   @id @default(uuid())
-  name         String
-  email        String   @unique @db.VarChar(255)
-  password     String
-  role         UserRole
-  refreshToken String   @default("")
-  hasCompletedProfile Boolean @default(false)
-  metadata Json?
+  id                  String   @id @default(uuid())
+  name                String
+  email               String   @unique @db.VarChar(255)
+  password            String
+  role                UserRole
+  hasCompletedProfile Boolean  @default(false)
+  metadata            Json?
 
   mentor   Mentor?
   employee Employee?
   student  Student?
 
-  createdAt DateTime @default(now())
+  createdAt DateTime  @default(now())
+  sessions  Session[]
 
   @@index([email])
 }
@@ -50,14 +50,14 @@ model College {
 }
 
 model Company {
-  id             String        @id @default(uuid())
-  name           String        @unique
-  registrationNo String        @unique
-  address        String
-  email          String        @unique
-  contactNo      String
-  status         CompanyStatus @default(active)
-  collabNameShowUp Boolean @default(false)
+  id               String        @id @default(uuid())
+  name             String        @unique
+  registrationNo   String        @unique
+  address          String
+  email            String        @unique
+  contactNo        String
+  status           CompanyStatus @default(active)
+  collabNameShowUp Boolean       @default(false)
 
   employees Employee[]
   jobs      Job[]
@@ -103,7 +103,7 @@ model Employee {
 model Student {
   id        String  @id @default(uuid())
   userId    String  @unique
-  collegeId String  
+  collegeId String
   year      Int
   branch    String
   rollNo    String
@@ -160,7 +160,7 @@ model Job {
   title      String
   salary     Int?
   tenure     String?
-  address    String?  
+  address    String?
   status     JobStatus @default(active)
   dueDate    DateTime?
   collegeId  String
@@ -191,7 +191,7 @@ model Application {
   jobId          String
   mentorId       String?
   status         ApplicationStatus @default(pending)
-  mentorApproval ApprovalStatus @default(pending)
+  mentorApproval ApprovalStatus    @default(pending)
 
   appliedAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -207,7 +207,6 @@ model Application {
   @@index([jobId])
   @@index([status])
 }
-
 
 enum ApprovalStatus {
   pending
@@ -286,4 +285,20 @@ enum CollabStatus {
   pending
   accepted
   rejected
+}
+
+model Session {
+  id               String    @id @default(uuid())
+  userId           String
+  refreshTokenHash String?
+  userAgent        String?
+  ip               String?
+  expiresAt        DateTime
+  revokedAt        DateTime?
+  createdAt        DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([expiresAt])
 }
