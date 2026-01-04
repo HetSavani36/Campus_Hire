@@ -2,6 +2,8 @@ import express from "express";
 import cors from "cors";
 import cookieParser from "cookie-parser";
 import dotenv from "dotenv";
+import cron from "node-cron";
+import { cleanupSessions } from "./service/sessionCleanUp.js";
 
 
 const app = express();
@@ -48,6 +50,11 @@ app.listen(PORT,()=>{
 
 app.use("/", async(req, res) => {
   console.log('404:Page not found');
+});
+
+
+cron.schedule("* 3 * * *", async () => {
+  await cleanupSessions();
 });
 
 export { app };
