@@ -237,11 +237,23 @@ const resetPassword = asyncHandler(async (req, res) => {
   res.json(new ApiResponse(200, {}, "password reset successfully"));
 });
 
+
+
 const jobApprovalDecision = asyncHandler(async (req, res) => {
+  
+  const JOB_TRANSITIONS = {
+    pending: ["approved", "rejected"],
+    approved: [],
+    rejected: [],
+  };
+  
+  function canTransition(current, next) {
+    return JOB_TRANSITIONS[current]?.includes(next);
+  };
+
   const { jobId, result } = req.params;
   if (!jobId || !result) throw new ApiError(403, "please provide all details");
-  if (result !== "1" && result !== "0")
-    throw new ApiError(403, "please provide correct decision");
+  if (!["1","0"].includes(result)) throw new ApiError(403, "please provide correct decision");
 
   const college = await prisma.college.findUnique({
     where: { email: req.user.email },
@@ -252,94 +264,117 @@ const jobApprovalDecision = asyncHandler(async (req, res) => {
   });
   if (!college) throw new ApiError(404, "no such college found");
 
-  const job = await prisma.job.findUnique({
-    where: { id: jobId },
-    select:{
-      id:true,
-      title:true,
-      dueDate:true,
-      isApproved:true,
-      collegeId:true,
-      company:{
-        select:{
-          name:true,
-          email:true
-        }
-      }
-    }
-  });
-  if (!job) throw new ApiError(404, "no such job found");
+  let nextStatus= result==="1"?"approved":"rejected"
+  let transitionOccurred = false;
+  let jobSnapshot;
 
-  if (job.collegeId !== college.id)
-    throw new ApiError(
-      403,
-      "cant make decision for job request for another colleges"
-    );
-  if (job.dueDate < new Date()) throw new ApiError(403, "job expired");
-  if (job.isApproved) throw new ApiError(403, "job request already approved");
-
-  const approval = result === "1" ? true : false;
-  if (approval) {
-    await prisma.job.update({
-      where: { id: job.id },
-      data: { isApproved: true },
-    });
-  } else {
-    await prisma.jobSkill.deleteMany({
-      where:{jobId:job.id}
-    })
-    await prisma.application.deleteMany({
-      where:{jobId:job.id}
-    })
-    await prisma.job.delete({
-      where: { id: job.id },
-    });
-  }
-
-  await emailQueue.add(
-    "job-decision",
-    {
-      companyName:job.company.name,
-      collegeName:college.name,
-      jobTitle:job.title,
-      status:approval?"approved":"rejected",
-      companyEmail:job.company.email,
-    },
-    emailOptions
-  );
-
-  if(approval){
-    const students=await prisma.student.findMany({
-      where:{collegeId:college.id},
+  await prisma.$transaction(async(tx)=>{
+    const job = await tx.job.findUnique({
+      where: { id: jobId },
       select:{
-        user:{
+        id:true,
+        title:true,
+        dueDate:true,
+        isApproved:true,
+        collegeId:true,
+        company:{
           select:{
             name:true,
             email:true
           }
         }
       }
-    })
-
-    for (const student of students) {
-      await emailQueue.add(
-        "job-notification",
-        {
-          studentName: student.user.name,
-          email: student.user.email,
-          companyName: job.company.name,
-          jobTitle: job.title,
-        },
-        emailOptions
+    });
+    if (!job) throw new ApiError(404, "no such job found");
+  
+    if (job.collegeId !== college.id)
+      throw new ApiError(
+        403,
+        "cant make decision for job request for another colleges"
+      );
+    if (job.dueDate < new Date()) throw new ApiError(403, "job expired");
+    
+    const currentStatus=job.isApproved?"approved":"pending"
+    if(!canTransition(currentStatus,nextStatus)){
+      if(currentStatus===nextStatus){
+        jobSnapshot=job;
+        return;
+      }
+      throw new ApiError(
+        409,
+        `Invalid job transition from ${currentStatus} to ${nextStatus}`
       );
     }
-  }
+    else{
+      if(nextStatus==="approved"){
+        await tx.job.update({
+          where: { id: job.id },
+          data: { isApproved: true },
+        });
+      }
+      else{
+        await tx.jobSkill.deleteMany({
+          where: { jobId: job.id },
+        });
+        await tx.application.deleteMany({
+          where: { jobId: job.id },
+        });
+        await tx.job.delete({
+          where: { id: job.id },
+        });
+      }
+      transitionOccurred=true
+      jobSnapshot=job
+    }
+  })
+
+  if(transitionOccurred){
+    await emailQueue.add(
+      "job-decision",
+      {
+        companyName:jobSnapshot.company.name,
+        collegeName:college.name,
+        jobTitle:jobSnapshot.title,
+        status:nextStatus,
+        companyEmail:jobSnapshot.company.email,
+      },
+      emailOptions
+    );
+
+    if (nextStatus === "approved") {
+      const students = await prisma.student.findMany({
+        where: { collegeId: college.id },
+        select: {
+          user: {
+            select: {
+              name: true,
+              email: true,
+            },
+          },
+        },
+      });
+
+      for (const student of students) {
+        await emailQueue.add(
+          "job-notification",
+          {
+            studentName: student.user.name,
+            email: student.user.email,
+            companyName: jobSnapshot.company.name,
+            jobTitle: jobSnapshot.title,
+          },
+          emailOptions
+        );
+      }
+    }
+
+  };
 
   res.json(
     new ApiResponse(
       200,
-      approval ,
-      `the job is ${approval ? "approved" : "rejected"}`
+      {status:nextStatus} ,
+      `the job is ${nextStatus}`
     )
   );
 });
@@ -561,7 +596,7 @@ const getAllCollabRequests = asyncHandler(async (req, res) => {
   });
   if (!college) throw new ApiError(404, "no such college found");
 
-  const collabRequests = await prisma.collab.findMany({
+  let collabRequests = await prisma.collab.findMany({
     where: {
       collegeId: college.id,
       status: status,
@@ -577,6 +612,11 @@ const getAllCollabRequests = asyncHandler(async (req, res) => {
       },
     },
   });
+
+  collabRequests=collabRequests.map((request)=>({
+    ...request,
+    status:status
+  }))
 
   res.json(new ApiResponse(200, collabRequests, "collab requests"));
 });
