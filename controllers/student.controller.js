@@ -281,8 +281,8 @@ const addSkill = asyncHandler(async (req, res) => {
 });
 
 const apply = asyncHandler(async (req, res) => {
+  
   const { jobId } = req.params;
-
   const student = await prisma.student.findUnique({
     where: { userId: req.user.id },
     select:{
@@ -298,66 +298,54 @@ const apply = asyncHandler(async (req, res) => {
     }
   });
   if (!student) throw new ApiError(404, "no such student found");
-  if (!student.resume)
-    throw new ApiError(403, "please upload your resume first");
+  if (!student.resume) throw new ApiError(403, "please upload your resume first");
 
-  const job = await prisma.job.findUnique({
-    where: { id: jobId },
-    select:{
-      id:true,
-      collegeId:true,
-      status:true,
-      isApproved:true,
-      dueDate:true,
-      mentorId:true,
-      title:true
+  const idempotencyKey=req.headers["idempotency-key"]
+  if(!idempotencyKey) throw new ApiError(403,"idempotency key header is required")
+  
+  let responseSnapshot=null
+  let occured=false
+
+  await prisma.$transaction(async(tx)=>{
+
+    const existingKey=await tx.idempotencyKey.findUnique({
+      where:{key:idempotencyKey}
+    })
+    if(existingKey){
+      responseSnapshot=existingKey.response
+      occured=false
+      return
     }
-  });
-  if (!job) throw new ApiError(404, "no such job found");
 
-  if (job.collegeId !== student.collegeId)
-    throw new ApiError(403, "the job is not for your college");
-  if (!job.isApproved) throw new ApiError(403, "cant apply to un-approved job");
-  if (job.status === "closed")
-    throw new ApiError(403, "job application is closed");
-  if (job.dueDate < new Date())
-    throw new ApiError(403, "the job application has expired");
-  if (!job.mentorId) throw new ApiError(403, "cant apply without mentor");
-
-  const exists = await prisma.application.findFirst({
-    where: {
-      studentId: student.id,
-      jobId: job.id,
-    },
-    select:{status:true}
-  });
-  if (exists && exists.status === "pending")
-    throw new ApiError(
-      403,
-      "you already applied and your application is under process"
-    );
-  if (exists && exists.status === "rejected")
-    throw new ApiError(403, "you already applied and you have been rejected");
-  if (exists && exists.status === "shortlisted")
-    throw new ApiError(
-      403,
-      "you already applied and you have been shortlisted"
-    );
-  if (exists && exists.status === "hired")
-    throw new ApiError(403, "you already applied and you have been hired");
-
-  const application = await prisma.application.create({
-    data: {
-      studentId: student.id,
-      jobId: job.id,
-      mentorId: job.mentorId,
-    },
-    select: {
+    const job = await tx.job.findUnique({
+      where: { id: jobId },
+      select:{
+        id:true,
+        collegeId:true,
+        status:true,
+        isApproved:true,
+        dueDate:true,
+        mentorId:true,
+        title:true
+      }
+    });
+    if (!job) throw new ApiError(404, "no such job found");
+  
+    if (job.collegeId !== student.collegeId) throw new ApiError(403, "the job is not for your college");
+    if (!job.isApproved) throw new ApiError(403, "cant apply to un-approved job");
+    if (job.status === "closed") throw new ApiError(403, "job application is closed");
+    if (job.dueDate < new Date()) throw new ApiError(403, "the job application has expired");
+    if (!job.mentorId) throw new ApiError(403, "cant apply without mentor");
+  
+    
+    let application=null
+    const selectQuery={
       id: true,
       status: true,
       appliedAt: true,
       job: {
         select: {
+          title:true,
           company: {
             select: {
               email: true,
@@ -378,21 +366,57 @@ const apply = asyncHandler(async (req, res) => {
           },
         },
       },
-    },
-  });
+    }
 
-  await emailQueue.add(
-    "job-applied",
-    { 
-      jobTitle:job.title, 
-      studentName:student.user.name, 
-      companyName:application.job.company.name, 
-      email:student.user.email 
-    },
-    emailOptions
-  );
+    try {
+      application = await tx.application.create({
+        data: {
+          studentId: student.id,
+          jobId: job.id,
+          mentorId: job.mentorId,
+        },
+        select: selectQuery
+      });
+      occured=true
 
-  res.json(new ApiResponse(201, application, "your have applied to this job"));
+    } catch (error) {
+        if(error.code==="P2002"){
+          application = await tx.application.findUnique({
+            where: { studentId_jobId: { studentId: student.id, jobId:job.id } },
+            select:selectQuery
+          });
+          occured = false;
+        }
+        else throw error
+    }
+
+    responseSnapshot=application
+
+    await tx.idempotencyKey.create({
+      data:{
+        key:idempotencyKey,
+        userId:student.id,
+        endpoint:"POST /api/job/:jobId/apply",
+        response:responseSnapshot
+      }
+    })
+    
+  })
+
+  if(occured){
+    await emailQueue.add(
+      "job-applied",
+      {
+        jobTitle: responseSnapshot.job.title,
+        studentName: student.user.name,
+        companyName: responseSnapshot.job.company.name,
+        email: student.user.email,
+      },
+      emailOptions
+    );
+  }
+
+  res.json(new ApiResponse(201, responseSnapshot, "your have applied to this job"));
 });
 
 const getJobsList = asyncHandler(async (req, res) => {

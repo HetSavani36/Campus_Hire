@@ -206,6 +206,7 @@ model Application {
   @@index([studentId])
   @@index([jobId])
   @@index([status])
+  @@unique([studentId, jobId])
 }
 
 enum ApprovalStatus {
@@ -301,4 +302,13 @@ model Session {
 
   @@index([userId])
   @@index([expiresAt])
+}
+
+model IdempotencyKey {
+  id          String   @id @default(uuid())
+  key         String   @unique
+  userId      String
+  endpoint    String
+  response    Json
+  createdAt   DateTime @default(now())
 }

@@ -4,6 +4,7 @@ import ApiResponse from "../utils/ApiResponse.js";
 import { PrismaClient } from "@prisma/client";
 import { generatePassword, hashPassword } from "../utils/password.util.js";
 import { emailOptions, emailQueue } from "../queues/email-queue.js";
+import { canTransition } from "../domain/jobStateMachine.js";
 const prisma = new PrismaClient();
 
 const createMentor = asyncHandler(async (req, res) => {
@@ -241,16 +242,6 @@ const resetPassword = asyncHandler(async (req, res) => {
 
 const jobApprovalDecision = asyncHandler(async (req, res) => {
   
-  const JOB_TRANSITIONS = {
-    pending: ["approved", "rejected"],
-    approved: [],
-    rejected: [],
-  };
-  
-  function canTransition(current, next) {
-    return JOB_TRANSITIONS[current]?.includes(next);
-  };
-
   const { jobId, result } = req.params;
   if (!jobId || !result) throw new ApiError(403, "please provide all details");
   if (!["1","0"].includes(result)) throw new ApiError(403, "please provide correct decision");
