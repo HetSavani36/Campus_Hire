@@ -30,6 +30,7 @@ import userRouter from "./routes/user.route.js"
 import companyRouter from "./routes/company.route.js";
 import studentRouter from "./routes/student.route.js";
 import mentorRouter from "./routes/mentor.route.js";
+import { cleanupIdempotencyKeys } from "./service/idempotencyKeysCleanUp.js";
 
 
 app.use("/api/auth",authRouter)
@@ -55,6 +56,10 @@ app.use("/", async(req, res) => {
 
 cron.schedule("* 3 * * *", async () => {
   await cleanupSessions();
+});
+
+cron.schedule("0 * * * *", async () => {
+  await cleanupIdempotencyKeys();
 });
 
 export { app };
