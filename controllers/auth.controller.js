@@ -131,8 +131,7 @@ const registerCompany = asyncHandler(async (req, res) => {
 const login = asyncHandler(async (req, res) => {
   const { email, password } = req.body;
 
-  if (!email || !password)
-    throw new ApiError(403, "please provide all details");
+  if (!email || !password) throw new ApiError(403, "please provide all details");
 
   const user = await prisma.user.findUnique({ where: { email: email } });
   if (!user) throw new ApiError(404, "no such user found");
@@ -168,16 +167,7 @@ const login = asyncHandler(async (req, res) => {
     }
   })
 
-  await prisma.session.deleteMany({
-    where: {
-      userId: user.id,
-      expiresAt: { lt: new Date() },
-    },
-  });
-
-
-  user.password = undefined;
-  
+  user.password = undefined;  
   const accessToken = generateAccessToken(user);
 
   res
@@ -233,13 +223,6 @@ const refreshController = asyncHandler(async (req, res) => {
     });
     throw new ApiError(401, "token mismatch");
   }
-
-  const incomingHash = crypto
-    .createHash("sha256")
-    .update(incomingRefreshToken)
-    .digest("hex");
-
-  if(incomingHash!==session.refreshTokenHash) throw new ApiError(401,"token mismatch")
 
   const user = await prisma.user.findUnique({
     where: { id: decoded.id },
