@@ -16,54 +16,42 @@ const prisma = new PrismaClient();
 
 const registerCollege = asyncHandler(async (req, res) => {
   const { name, address, email, phone, password, confirmPassword } = req.body;
-  if (!name || !address || !email || !password || !confirmPassword)
-    throw new ApiError(403, "provide all fields");
+  
+  if (!name || !address || !email || !password || !confirmPassword) throw new ApiError(400, "provide all fields");
+  if (password !== confirmPassword) throw new ApiError(403, "password and confirm password must be same");
+  if (address.length < 2) throw new ApiError(403, "address must be greater than 1 characters");
+  if (name.length < 2) throw new ApiError(403, "name must be greater than 1 characters");
 
-  if (password.toUpperCase() !== confirmPassword.toUpperCase())
-    throw new ApiError(403, "password and confirm password must be same");
+  let college=null
+  let collegeAdmin=null
 
-  if (address.length < 2)
-    throw new ApiError(403, "address must be greater than 1 characters");
-  if (name.length < 2)
-    throw new ApiError(403, "name must be greater than 1 characters");
+  try {
+    await prisma.$transaction(async(tx)=>{
+      college=await tx.college.create({
+        data: {
+          name: name.toUpperCase(),
+          address: address,
+          email: email.toLowerCase(),
+          phone: phone ?? "NA",
+        },
+      })
 
-  let exists = await prisma.college.findFirst({
-    where: {
-      OR: [{ name: name }, { email: email }],
-    },
-  });
-  if (exists) throw new ApiError(403, "this college already exists");
-
-  exists = await prisma.user.findFirst({
-    where: {
-      OR: [{ name: name }, { email: email }],
-    },
-  });
-  if (exists) throw new ApiError(403, "this user already exists");
-
-  const hashedPassword = await hashPassword(password);
-
-  const [college, collegeAdmin] = await prisma.$transaction([
-    prisma.college.create({
-      data: {
-        name: name.toUpperCase(),
-        address: address,
-        email: email,
-        phone: phone ?? "NA",
-      },
-    }),
-
-    prisma.user.create({
-      data: {
-        name: name.toUpperCase(),
-        email: email,
-        password: hashedPassword,
-        role: "collegeAdmin",
-      },
-    }),
-  ]);
-
-  collegeAdmin.password = undefined;
+      const hashedPassword = await hashPassword(password);
+      
+      collegeAdmin=await tx.user.create({
+        data: {
+          name: name.toUpperCase(),
+          email: email,
+          password: hashedPassword,
+          role: "collegeAdmin",
+        },
+      })
+      collegeAdmin.password = undefined;
+    })
+  } catch (err) {
+    if (err.code === "P2002") throw new ApiError(409, "email is already registered");
+    throw new ApiError(409,err)
+  }
 
   await emailQueue.add(
     "register-college",
@@ -73,11 +61,11 @@ const registerCollege = asyncHandler(async (req, res) => {
     },
     emailOptions
   );
-
+  
   res.json(
     new ApiResponse(
       201,
-      { college, collegeAdmin },
+      { college:college, admin:collegeAdmin },
       "college registered successfully"
     )
   );
