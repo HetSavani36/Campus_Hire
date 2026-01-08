@@ -11,14 +11,6 @@ const createMentor = asyncHandler(async (req, res) => {
   const { name, email } = req.body;
   if (!name || !email) throw new ApiError(403, "please provide all details");
 
-  const exists = await prisma.user.findUnique({
-    where: {
-      email: email,
-    },
-    select:{id:true}
-  });
-  if (exists) throw new ApiError(403, "user with this email already exists");
-
   const college = await prisma.college.findUnique({
     where: {
       email: req.user.email,
@@ -28,71 +20,69 @@ const createMentor = asyncHandler(async (req, res) => {
       name:true
     }
   });
-  if (!college)
-    throw new ApiError(404, "no college found where this user works");
+  if(!college) throw new ApiError(404, "no such college found");
 
   const password = generatePassword(8);
+  let mentor=null
   
+  try {
+    await prisma.$transaction(async (tx) => {
+      const hashedPassword = await hashPassword(password);
+      const user = await tx.user.create({
+        data: {
+          name: name,
+          email: email,
+          password: hashedPassword,
+          role: "mentor",
+        },
+      });
+  
+      mentor = await tx.mentor.create({
+        data: {
+          userId: user.id,
+          collegeId: college.id,
+        },
+        select: {
+          id: true,
+          user: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+              role: true,
+              createdAt: true,
+            },
+          },
+          college: {
+            select: {
+              id: true,
+              name: true,
+              address: true,
+              email: true,
+              phone: true,
+            },
+          },
+        },
+      });
+    });
+  } catch (err) {
+    if (err.code === "P2002") throw new ApiError(409, "user/mentor already exists");
+    throw new ApiError(500, "failed to create mentors");
+  }
+
   await emailQueue.add(
     "mentor-credentials",
     {
-      name:name,
+      name: name,
       email: email,
       password: password,
-      collegeName:college.name
+      collegeName: college.name,
     },
     emailOptions
   );
-  
-
-  const hashedPassword = await hashPassword(password);
-
-  const result = await prisma.$transaction(async (tx) => {
-    const user = await prisma.user.create({
-      data: {
-        name: name,
-        email: email,
-        password: hashedPassword,
-        role: "mentor",
-      },
-    });
-
-    const mentor = await prisma.mentor.create({
-      data: {
-        userId: user.id,
-        collegeId: college.id,
-      },
-      select: {
-        id: true,
-        user: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            role: true,
-            createdAt: true,
-          },
-        },
-        college: {
-          select: {
-            id: true,
-            name: true,
-            address: true,
-            email: true,
-            phone: true,
-          },
-        },
-      },
-    });
-    return { user, mentor };
-  });
 
   res.json(
-    new ApiResponse(
-      201,
-      result.mentor,
-      "mentor created successfully"
-    )
+    new ApiResponse( 201, mentor, "mentor created successfully" )
   );
 });
 
