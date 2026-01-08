@@ -353,8 +353,7 @@ const assignMentor = asyncHandler(async (req, res) => {
   const { mentorId } = req.body;
   const { jobId } = req.params;
 
-  if (!mentorId || !jobId)
-    throw new ApiError(403, "please provide all details");
+  if (!mentorId || !jobId) throw new ApiError(403, "please provide all details");
 
   const college = await prisma.college.findUnique({
     where: { email: req.user.email },
@@ -362,7 +361,6 @@ const assignMentor = asyncHandler(async (req, res) => {
   });
   if (!college) throw new ApiError(404, "no such college found");
 
-  // ✅ FIXED: find mentor by UNIQUE id
   const mentor = await prisma.mentor.findUnique({
     where: { id: mentorId },
     select: {
@@ -378,8 +376,7 @@ const assignMentor = asyncHandler(async (req, res) => {
   });
   if (!mentor) throw new ApiError(404, "no such mentor found");
 
-  if (mentor.collegeId !== college.id)
-    throw new ApiError(403, "this mentor does not belong to your college");
+  if (mentor.collegeId !== college.id) throw new ApiError(403, "this mentor does not belong to your college");
 
   const job = await prisma.job.findUnique({
     where: { id: jobId },
@@ -396,41 +393,33 @@ const assignMentor = asyncHandler(async (req, res) => {
     },
   });
   if (!job) throw new ApiError(404, "no such job found");
-
-  if (college.id !== job.collegeId)
-    throw new ApiError(
-      403,
-      "cant assign mentor to job outside your organization"
-    );
-
-  if (job.status === "closed")
-    throw new ApiError(403, "cant assign mentor to closed job");
-
-  if (job.dueDate < new Date())
-    throw new ApiError(403, "cant assign mentor to expired job");
-
-  if (!job.isApproved)
-    throw new ApiError(403, "cant assign mentor to un-approved job");
-
-  await prisma.job.update({
-    where: { id: jobId },
-    data: { mentorId },
-  });
-
-  await emailQueue.add(
-    "assign-mentor",
-    {
-      mentorName: mentor.user.name,
-      jobTitle: job.title,
-      companyName: job.company.name,
-      mentorEmail: mentor.user.email,
-    },
-    emailOptions
-  );
-  console.log(mentor);
+  if (college.id !== job.collegeId) throw new ApiError(403,"cant assign mentor to job outside your organization");
+  if (job.status === "closed") throw new ApiError(403, "cant assign mentor to closed job");
+  if (job.dueDate < new Date()) throw new ApiError(403, "cant assign mentor to expired job");
   
+  let occured=false
+  await prisma.$transaction(async(tx)=>{
+    const updated=await tx.job.updateMany({
+      where: { id: jobId,isApproved:true,mentorId:null },
+      data: { mentorId },
+    });
+    if (updated.count === 1) occured = true;
+  })
+  
+  if(occured){
+    await emailQueue.add(
+      "assign-mentor",
+      {
+        mentorName: mentor.user.name,
+        jobTitle: job.title,
+        companyName: job.company.name,
+        mentorEmail: mentor.user.email,
+      },
+      emailOptions
+    );
+  }
 
-  res.json(new ApiResponse(200, mentor, "mentor assigned successfully"));
+  res.json(new ApiResponse(200, {mentorAssigned:occured,mentor}, occured?"mentor assigned successfully":"mentor already assigned"));
 });
 
 
