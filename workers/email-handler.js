@@ -215,7 +215,7 @@ export const sendCollabDecisionMail = async (data) => {
 
 
 export const sendResetPasswordMail=async(data)=>{
-    const { name, email, role } = data;
+    const { name, email, role,password } = data;
     await transporter.sendMail({
       from: process.env.EMAIL_USER,
       to: email,
@@ -232,7 +232,7 @@ export const sendResetPasswordMail=async(data)=>{
         </p>
 
         <p>
-            You can now log in using your updated password.
+            You can now log in using your updated password: " ${password} "
             For security reasons, please do not share your credentials
             with anyone.
         </p>

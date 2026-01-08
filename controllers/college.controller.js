@@ -138,7 +138,7 @@ const collabDecision = asyncHandler(async (req, res) => {
         status: nextStatus,
       },
     });
-    
+
     if(updated.count===1) occured=true
   })
 
@@ -190,22 +190,18 @@ const resetPassword = asyncHandler(async (req, res) => {
   });
   if (!college) throw new ApiError(404, "no such college found");
 
-  if (!user.mentor && !user.student)
-    throw new ApiError(403, "you can only reset password of student/mentor");
-  if (user.mentor && user.mentor.collegeId !== college.id)
-    throw new ApiError(
-      403,
-      "you cant reset password of user outside your organization"
-    );
-  if (user.student && user.student.collegeId !== college.id)
-    throw new ApiError(
-      403,
-      "you cant reset password of user outside your organization"
-    );
-
+  if (!user.mentor && !user.student) throw new ApiError(403, "you can only reset password of student/mentor");
+  if ( (user.mentor && user.mentor.collegeId !== college.id) || (user.student && user.student.collegeId !== college.id) ) throw new ApiError(403,"you cant reset password of user outside your organization");
+  
   const password = generatePassword(8);
   const hashedPassword = await hashPassword(password);
 
+  await prisma.user.update({
+    where: { id: user.id },
+    data: {
+      password: hashedPassword,
+    },
+  });
   
   await emailQueue.add(
     "reset-password",
@@ -213,17 +209,10 @@ const resetPassword = asyncHandler(async (req, res) => {
       name: user.name,
       email: user.email,
       role: user.role,
+      password:password
     },
     emailOptions
   );
-
-  
-  await prisma.user.update({
-    where: { id: user.id },
-    data: {
-      password: hashedPassword,
-    },
-  });
 
   res.json(new ApiResponse(200, {}, "password reset successfully"));
 });
