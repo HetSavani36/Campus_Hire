@@ -4,7 +4,8 @@ import ApiResponse from "../utils/ApiResponse.js";
 import { PrismaClient } from "@prisma/client";
 import { generatePassword, hashPassword } from "../utils/password.util.js";
 import { emailOptions, emailQueue } from "../queues/email-queue.js";
-import { canTransition } from "../domain/jobStateMachine.js";
+import { canJobTransition } from "../domain/jobStateMachine.js";
+import { canCollabTransition } from "../domain/collabStateMachine.js";
 const prisma = new PrismaClient();
 
 const createMentor = asyncHandler(async (req, res) => {
@@ -89,10 +90,8 @@ const createMentor = asyncHandler(async (req, res) => {
 const collabDecision = asyncHandler(async (req, res) => {
   const { companyId } = req.params;
   const { result } = req.body;
-  if (!companyId || !result)
-    throw new ApiError(403, "please provide all details");
-  if (result !== "0" && result !== "1")
-    throw new ApiError(403, "provide proper result value");
+  if (!companyId || !result) throw new ApiError(403, "please provide all details");
+  if ( !["1","0"].includes(result)) throw new ApiError(403, "provide proper result value");
 
   const college = await prisma.college.findUnique({
     where: { email: req.user.email },
@@ -112,51 +111,52 @@ const collabDecision = asyncHandler(async (req, res) => {
     });
   if (!company) throw new ApiError(404, "no such company found");
 
-  const collabRequest = await prisma.collab.findUnique({
-    where: {
-      collegeId_companyId: {
-        collegeId: college.id,
-        companyId: companyId,
+  const nextStatus=(result==="1")?"accepted":"rejected"
+  let occured=false
+
+  await prisma.$transaction(async(tx)=>{  
+    const collabRequest = await tx.collab.findUnique({
+      where: {
+        collegeId_companyId: {
+          collegeId: college.id,
+          companyId: companyId,
+        },
       },
-    },
-    select:{
-      id:true,
-      status:true
-    }
-  });
-  if (!collabRequest) throw new ApiError(404, "no such collab request found");
+      select:{
+        id:true,
+        status:true
+      }
+    });
+    if (!collabRequest) throw new ApiError(404, "no such collab request found");
+  
+    const currentStatus = collabRequest.status;
+    if(!canCollabTransition(currentStatus,nextStatus)) return 
 
-  if (collabRequest.status === "accepted")
-    throw new ApiError(403, "collab request already accepted");
-
-  const status = result === "1" ? "accepted" : "rejected";
-
-  if (result === "1") {
-    await prisma.collab.update({
-      where: { id: collabRequest.id },
+    const updated=await tx.collab.updateMany({
+      where: { id: collabRequest.id,status:currentStatus },
       data: {
-        status: "accepted",
+        status: nextStatus,
       },
     });
-  } else {
-    await prisma.collab.delete({
-      where: { id: collabRequest.id },
-    });
+    
+    if(updated.count===1) occured=true
+  })
+
+  if(occured){
+    await emailQueue.add(
+      "collab-decision",
+      {
+        companyName: company.name,
+        collegeName: college.name,
+        status: nextStatus,
+        companyEmail:company.email
+      },
+      emailOptions
+    );
   }
 
-  await emailQueue.add(
-    "collab-decision",
-    {
-      companyName: company.name,
-      collegeName: college.name,
-      status: status,
-      companyEmail:company.email
-    },
-    emailOptions
-  );
-
   res.json(
-    new ApiResponse(200, status , `the collab request is ${status}`)
+    new ApiResponse(200, nextStatus, `the collab request is ${nextStatus}`)
   );
 });
 
@@ -276,7 +276,7 @@ const jobApprovalDecision = asyncHandler(async (req, res) => {
     if (job.dueDate < new Date()) throw new ApiError(403, "job expired");
     
     const currentStatus=job.isApproved?"approved":"pending"
-    if(!canTransition(currentStatus,nextStatus)){
+    if(!canJobTransition(currentStatus,nextStatus)){
       if(currentStatus===nextStatus){
         jobSnapshot=job;
         return;

@@ -4,6 +4,6 @@ export const JOB_TRANSITIONS = {
   rejected: [],
 };
 
-export function canTransition(current, next) {
+export function canJobTransition(current, next) {
   return JOB_TRANSITIONS[current]?.includes(next);
 }
