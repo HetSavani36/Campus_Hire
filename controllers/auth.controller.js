@@ -72,90 +72,57 @@ const registerCollege = asyncHandler(async (req, res) => {
 });
 
 const registerCompany = asyncHandler(async (req, res) => {
-  const {
-    name,
-    address,
-    email,
-    password,
-    confirmPassword,
-    registrationNo,
-    contactNo,
-  } = req.body;
-  if (
-    !name ||
-    !address ||
-    !email ||
-    !password ||
-    !confirmPassword ||
-    !contactNo ||
-    !registrationNo
-  )
-    throw new ApiError(403, "provide all fields");
+  const { name, address, email, password, confirmPassword, registrationNo, contactNo, } = req.body;
+  if ( !name || !address || !email || !password || !confirmPassword || !contactNo || !registrationNo ) throw new ApiError(403, "provide all fields");
+  if (password !== confirmPassword) throw new ApiError(403, "password and confirm password must be same");
+  if (address.length < 2) throw new ApiError(403, "address must be greater than 1 characters");
+  if (name.length < 2) throw new ApiError(403, "name must be greater than 1 characters");
 
-  if (password.toUpperCase() !== confirmPassword.toUpperCase())
-    throw new ApiError(403, "password and confirm password must be same");
+  let company=null
+  let companyAdmin=null
 
-  if (address.length < 2)
-    throw new ApiError(403, "address must be greater than 1 characters");
-  if (name.length < 2)
-    throw new ApiError(403, "name must be greater than 1 characters");
+  try {
+    await prisma.$transaction(async(tx)=>{
+      company = await tx.company.create({
+          data: {
+            name: name.toUpperCase(),
+            registrationNo: registrationNo,
+            address: address,
+            email: email,
+            contactNo: contactNo,
+          },
+        });
+      })
 
-  let exists = await prisma.company.findFirst({
-    where: {
-      OR: [
-        { name: name },
-        { email: email },
-        { registrationNo: registrationNo },
-      ],
+      const hashedPassword = await hashPassword(password);
+      companyAdmin=await tx.user.create({
+        data: {
+          name: name.toUpperCase(),
+          email: email,
+          password: hashedPassword,
+          role: "companyAdmin",
+        },
+      })
+      companyAdmin.password = undefined;
+  } 
+  catch (err) {
+    if (err.code === "P2002") throw new ApiError(409, "email is already registered");
+    throw new ApiError(409, err);
+  }
+
+  await emailQueue.add(
+    "register-company",
+    {
+      name: company.name,
+      email: company.email,
     },
-  });
-  if (exists) throw new ApiError(403, "this company already exists");
-
-  exists = await prisma.user.findFirst({
-    where: {
-      OR: [{ name: name }, { email: email }],
-    },
-  });
-  if (exists) throw new ApiError(403, "this user already exists");
-
-  const hashedPassword = await hashPassword(password);
-
-  const [company, companyAdmin] = await prisma.$transaction([
-    prisma.company.create({
-      data: {
-        name: name.toUpperCase(),
-        registrationNo: registrationNo,
-        address: address,
-        email: email,
-        contactNo: contactNo,
-      },
-    }),
-
-    prisma.user.create({
-      data: {
-        name: name.toUpperCase(),
-        email: email,
-        password: hashedPassword,
-        role: "companyAdmin",
-      },
-    }),
-  ]);
-
-  companyAdmin.password = undefined;
-
-    await emailQueue.add(
-      "register-company",
-      {
-        name: company.name,
-        email: company.email,
-      },
-      emailOptions
-    );
+    emailOptions
+  );
 
   res.json(
     new ApiResponse(
       201,
-      { company, companyAdmin },
+      { company:company, admin:companyAdmin },
       "company registered successfully"
     )
   );
