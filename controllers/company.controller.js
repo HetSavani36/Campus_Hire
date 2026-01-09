@@ -194,14 +194,8 @@ const resetPassword = asyncHandler(async (req, res) => {
     where: { email: req.user.email },
   });
   if (!company) throw new ApiError(404, "no such company found");
-
-  if (!user.employee)
-    throw new ApiError(403, "you can only reset password of employee");
-  if (user.employee.companyId !== company.id)
-    throw new ApiError(
-      403,
-      "you cant reset password of user outside your organization"
-    );
+  if (!user.employee) throw new ApiError(403, "you can only reset password of employee");
+  if (user.employee.companyId !== company.id) throw new ApiError(403,"you cant reset password of user outside your organization");
 
   const password = generatePassword(8);
   const hashedPassword = await hashPassword(password);
@@ -212,6 +206,7 @@ const resetPassword = asyncHandler(async (req, res) => {
       password: hashedPassword,
     },
   });
+
 
   await emailQueue.add(
     "reset-password",
