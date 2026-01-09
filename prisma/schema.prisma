@@ -168,6 +168,7 @@ model Job {
   isApproved Boolean   @default(false)
   createdAt  DateTime  @default(now())
   mentorId   String?
+  jobHash     String?
 
   mentor  Mentor?  @relation(fields: [mentorId], references: [id])
   company Company  @relation(fields: [companyId], references: [id])
@@ -176,6 +177,7 @@ model Job {
   applications Application[]
   jobSkills    JobSkill[]
 
+  @@unique([companyId, collegeId, jobHash])
   @@index([companyId])
   @@index([collegeId])
 }
