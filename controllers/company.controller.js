@@ -227,6 +227,10 @@ const resetPassword = asyncHandler(async (req, res) => {
     },
   });
 
+  await tx.session.updateMany({
+    where: { userId: user.id },
+    data: { revokedAt: new Date() },
+  });
 
   await emailQueue.add(
     "reset-password",
