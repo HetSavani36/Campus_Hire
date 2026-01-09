@@ -12,60 +12,32 @@ const prisma = new PrismaClient();
 const uploadBulkStudents = asyncHandler(async (req, res) => {
   if (!req.file) throw new ApiError(400, "CSV file is required");
   
-  // 1️⃣ Parse CSV
-  const rows = await parseFileBuffer(req.file.buffer, req.file.originalname);
-
-  if (!rows || rows.length === 0) {
-    throw new ApiError(400, "CSV file is empty or invalid");
-  }
-
-  // 2️⃣ Get college from logged-in user
   const college = await prisma.college.findUnique({
     where: { email: req.user.email },
     select:{id:true}
   });
+  if (!college) throw new ApiError(404, "College not found");
 
-  if (!college) {
-    throw new ApiError(404, "College not found");
-  }
-
+  const rows = await parseFileBuffer(req.file.buffer, req.file.originalname);
+  if (!rows || rows.length === 0) throw new ApiError(400, "CSV file is empty or invalid");
+  
   const createdStudents = [];
   const skippedStudents = [];
 
-  // 3️⃣ Transaction: create users
-  await prisma.$transaction(async (tx) => {
-    for (const row of rows) {
-      
-      if (!row.email || !row.name) {
-        skippedStudents.push({
-          email: row.email || null,
-          reason: "Missing required fields",
-        });
-        continue;
-      }
-
-      const existingUser = await tx.user.findUnique({
-        where: { email: row.email },
-        select:{id:true}
+  for (const row of rows) {
+    if (!row.email || !row.name) {
+      skippedStudents.push({
+        email: row.email || null,
+        reason: "Missing required fields",
       });
-
-      const existingStudent = await tx.student.findUnique({
-        where: { email: row.email },
-        select: { id: true },
-      });
-
-      if (existingUser || existingStudent) {
-        skippedStudents.push({
-          email: row.email,
-          reason: "User already exists",
-        });
-        continue;
-      }
-
-      const password = generatePassword(8);
-      const hashedPassword = await hashPassword(password);
-
-      const user = await tx.user.create({
+      continue;
+    }
+    
+    const password = generatePassword(8);
+    const hashedPassword = await hashPassword(password);
+  
+    try {
+      const user = await prisma.user.create({
         data: {
           name: row.name,
           email: row.email,
@@ -89,28 +61,31 @@ const uploadBulkStudents = asyncHandler(async (req, res) => {
         password,
         rollNo: row.rollNo || null,
       });
-    }
-  });
-
-  // 4️⃣ Queue emails AFTER transaction commit
-  if (createdStudents.length > 0) {
-    
-    for (const student of createdStudents) {
-      await emailQueue.add(
-        "student-credentials",
-        {
-          email: student.email,
-          password: student.password,
-          name: student.name,
-          rollNo:student.rollNo
-        },
-        emailOptions
-      );
-    }
-
+    } catch (err) {
+        if (err.code === "P2002") {
+          skippedStudents.push({
+            email: row.email,
+            reason: "User already exists",
+          });
+          continue
+        }
+        throw new ApiError(500, "failed to create student");
+    }      
   }
 
-  // 5️⃣ API Response (NO passwords exposed)
+  for (const student of createdStudents) {
+    await emailQueue.add(
+      "student-credentials",
+      {
+        email: student.email,
+        password: student.password,
+        name: student.name,
+        rollNo:student.rollNo
+      },
+      emailOptions
+    );
+  }
+
   return res.json(
     new ApiResponse(
       201,
@@ -127,8 +102,7 @@ const uploadBulkStudents = asyncHandler(async (req, res) => {
 const createProfile = asyncHandler(async (req, res) => {
   const { year, aboutMe, branch } = req.body;
   if (!year || !branch) throw new ApiError(403, "please select year & branch");
-  if (year !== "1" && year !== "2" && year !== "3" && year !== "4")
-    throw new ApiError(403, "please select valid year");
+  if (!["1","2","3","4"].includes(year)) throw new ApiError(403, "please select valid year");
 
   const user = await prisma.user.findUnique({
     where: { id: req.user.id },
