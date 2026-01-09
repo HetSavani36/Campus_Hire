@@ -101,69 +101,84 @@ const uploadBulkStudents = asyncHandler(async (req, res) => {
 
 const createProfile = asyncHandler(async (req, res) => {
   const { year, aboutMe, branch } = req.body;
-  if (!year || !branch) throw new ApiError(403, "please select year & branch");
-  if (!["1","2","3","4"].includes(year)) throw new ApiError(403, "please select valid year");
 
-  const user = await prisma.user.findUnique({
-    where: { id: req.user.id },
-    select:{
-      id:true,
-      metadata:true,
-      hasCompletedProfile:true
-    }
-  });
-  if (!user) throw new ApiError(404, "no such user found");
+  if (!year || !branch) {
+    throw new ApiError(400, "year and branch are required");
+  }
 
-  if (user.hasCompletedProfile)
-    throw new ApiError(403, "user already completed profile");
-  if (!user.metadata) throw new ApiError(403, "no user data found");
-  if (!user.metadata.collegeId || !user.metadata.rollNo)
-    throw new ApiError(403, "collegeId or rollNo is missing in metadata");
+  if (!["1", "2", "3", "4"].includes(year)) {
+    throw new ApiError(400, "invalid year");
+  }
 
-  const [student, updatedUser] = await prisma.$transaction([
-    prisma.student.create({
-      data: {
-        userId: user.id,
-        collegeId: user.metadata.collegeId,
-        year: Number(year),
-        branch: branch,
-        rollNo: user.metadata.rollNo,
-        resume: null,
-        aboutMe: aboutMe ?? null,
-      },
-      select:{id:true}
-    }),
-    prisma.user.update({
-      where: { id: user.id },
-      data: {
-        hasCompletedProfile: true,
-      },
+  await prisma.$transaction(async (tx) => {
+    const user = await tx.user.findUnique({
+      where: { id: req.user.id },
       select: {
         id: true,
-        name: true,
-        email: true,
+        metadata: true,
         hasCompletedProfile: true,
-        student: {
-          select: {
-            year: true,
-            branch: true,
-            rollNo: true,
-            resume: true,
-            aboutMe: true,
-            college: {
-              select: {
-                email: true,
-                name: true,
-                address: true,
-              },
+      },
+    });
+
+    if (!user) throw new ApiError(404, "user not found");
+    if (!user.metadata?.collegeId || !user.metadata?.rollNo) {
+      throw new ApiError(403, "collegeId or rollNo missing");
+    }
+
+    const student = await tx.student.findUnique({
+      where: { userId: user.id },
+    });
+
+    if (!student) {
+      await tx.student.create({
+        data: {
+          userId: user.id,
+          collegeId: user.metadata.collegeId,
+          year: Number(year),
+          branch,
+          rollNo: user.metadata.rollNo,
+          resume: null,
+          aboutMe: aboutMe ?? null,
+        },
+      });
+    }
+
+    await tx.user.updateMany({
+      where: { id: user.id, hasCompletedProfile: false },
+      data: { hasCompletedProfile: true },
+    });
+  });
+
+  // Re-fetch final state
+  const finalUser = await prisma.user.findUnique({
+    where: { id: req.user.id },
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      hasCompletedProfile: true,
+      student: {
+        select: {
+          year: true,
+          branch: true,
+          rollNo: true,
+          resume: true,
+          aboutMe: true,
+          college: {
+            select: {
+              email: true,
+              name: true,
+              address: true,
             },
           },
         },
       },
-    }),
-  ]);
-  res.json(new ApiResponse(200, updatedUser, "profile created successfully"));
+    },
+  });
+
+  res.json(new ApiResponse(200, finalUser, "profile created successfully"));
 });
+
 
 const editProfile = asyncHandler(async (req, res) => {
   const allowedUpdates = ["year", "resume", "aboutMe", "branch"];
@@ -205,54 +220,47 @@ const editProfile = asyncHandler(async (req, res) => {
 
 const addSkill = asyncHandler(async (req, res) => {
   const { name } = req.body;
-  if (!name) throw new ApiError(403, "please provide skill name");
+  if (!name) throw new ApiError(400, "skill name is required");
 
   const student = await prisma.student.findUnique({
     where: { userId: req.user.id },
     select: { id: true },
   });
-  if (!student) throw new ApiError(404, "no such student found");
+  if (!student) throw new ApiError(404, "student not found");
 
-  const exists = await prisma.skill.findUnique({
-    where: { name: name.toUpperCase() },
-  });
-  if (exists) {
-    const studentSkillExists = await prisma.studentSkill.findUnique({
-      where: {
-        studentId_skillId: {
-          studentId: student.id,
-          skillId: exists.id,
-        },
-      },
-      select:{skillId:true}
-    });
-    if (studentSkillExists) throw new ApiError(403, "skill already added");
+  const normalizedName = name.trim().toUpperCase();
 
-    await prisma.studentSkill.create({
+  await prisma.$transaction(async (tx) => {
+    let skill;
+
+    try {
+      skill = await tx.skill.create({
+        data: { name: normalizedName },
+        select: { id: true },
+      });
+    } catch (err) {
+      if (err.code === "P2002") {
+        skill = await tx.skill.findUnique({
+          where: { name: normalizedName },
+          select: { id: true },
+        });
+      } else {
+        throw err;
+      }
+    }
+
+    await tx.studentSkill.createMany({
       data: {
         studentId: student.id,
-        skillId: exists.id,
+        skillId: skill.id,
       },
-      select:{id:true}
+      skipDuplicates: true,
     });
-    return res.json(new ApiResponse(201, exists, "skill added successfully"));
-  }
-
-  const skill = await prisma.skill.create({
-    data: {
-      name: name.toUpperCase(),
-    },
-  });
-  await prisma.studentSkill.create({
-    data: {
-      studentId: student.id,
-      skillId: skill.id,
-    },
-    select:{skillId:true}
   });
 
-  res.json(new ApiResponse(201, skill, "skill added successfully"));
+  res.json(new ApiResponse(201, normalizedName, "skill added successfully"));
 });
+
 
 const apply = asyncHandler(async (req, res) => {
   
