@@ -10,24 +10,32 @@ const changePassword=asyncHandler(async(req,res)=>{
     const {oldPassword,newPassword}=req.body
     if(!oldPassword || !newPassword) throw new ApiError(403,"please provide all details")
 
-    const user=await prisma.user.findUnique({
-        where:{id:req.user.id},
-        select:{
-          id:true,
-          password:true,
-          name:true,
-          email:true
-        }
-    }) 
-
+    const user=await tx.user.findUnique({
+      where:{id:req.user.id},
+      select:{
+        id:true,
+        password:true,
+        name:true,
+        email:true
+      }
+    })
+    if(!user) throw new ApiError(404,"no such user found") 
+    
     const isPasswordCorrect=await comparePassword(oldPassword,user.password)
     if(!isPasswordCorrect) throw new ApiError(403,"old password not matches")
-
     const hashedPassword=await hashPassword(newPassword)
-    await prisma.user.update({
+    
+    await prisma.$transaction(async(tx)=>{
+      await tx.user.update({
         where:{id:user.id},
         data:{password:hashedPassword},
         select:{id:true}
+      })
+
+      await tx.session.updateMany({
+        where:{userId:user.id},
+        data:{revokedAt:new Date()}
+      })
     })
 
     await emailQueue.add(
