@@ -92,69 +92,85 @@ const createEmployee = asyncHandler(async (req, res) => {
 
 const collabWithCollege = asyncHandler(async (req, res) => {
   const { collegeId } = req.params;
-  if (!collegeId) throw new ApiError(403, "please provide college id");
+  if (!collegeId) throw new ApiError(400, "please provide college id");
 
   const company = await prisma.company.findUnique({
     where: { email: req.user.email },
-    select:{
-      id:true,
-      name:true
-    }
+    select: { id: true, name: true },
   });
   if (!company) throw new ApiError(404, "no such company found");
 
   const college = await prisma.college.findUnique({
     where: { id: collegeId },
-    select:{
-      id:true,
-      name:true,
-      email:true
-    }
+    select: { id: true, name: true, email: true },
   });
   if (!college) throw new ApiError(404, "no such college found");
 
-  const exists = await prisma.collab.findUnique({
-    where: {
-      collegeId_companyId: {
-        collegeId: collegeId,
+  let collabRequest;
+  let created = false;
+
+  await prisma.$transaction(async (tx) => {
+    const existing = await tx.collab.findUnique({
+      where: {
+        collegeId_companyId: {
+          collegeId,
+          companyId: company.id,
+        },
+      },
+      select: {
+        id: true,
+        createdAt: true,
+        collegeId: true,
+        companyId: true,
+        status: true,
+      },
+    });
+
+    if (existing) {
+      collabRequest = existing;
+      return; 
+    }
+
+    collabRequest = await tx.collab.create({
+      data: {
+        collegeId,
         companyId: company.id,
       },
-    },
-    select:{status:true}
-  });
-  if (exists && exists.status === "accepted")
-    throw new ApiError(403, "request already accepted");
-  if (exists && exists.status === "pending")
-    throw new ApiError(403, "request already exists");
+      select: {
+        id: true,
+        createdAt: true,
+        collegeId: true,
+        companyId: true,
+        status: true,
+      },
+    });
 
-  const collabRequest = await prisma.collab.create({
-    data: {
-      collegeId: collegeId,
-      companyId: company.id,
-    },
-    select:{
-      id:true,
-      createdAt:true,
-      collegeId:true,
-      companyId:true,
-      status:true,
-    }
+    created = true;
   });
 
-  await emailQueue.add(
-    "collab-request",
-    {
-      collegeEmail:college.email,
-      collegeName:college.name,
-      companyName:company.name,
-    },
-    emailOptions
-  );
+  if (created) {
+    await emailQueue.add(
+      "collab-request",
+      {
+        collegeEmail: college.email,
+        collegeName: college.name,
+        companyName: company.name,
+      },
+      emailOptions
+    );
+  }
 
   res.json(
-    new ApiResponse(201, collabRequest, "collab request sent successfully")
+    new ApiResponse(
+      201,
+      collabRequest,
+      created
+        ? "collaboration request sent successfully"
+        : "collaboration request already exists"
+    )
   );
 });
+
 
 const resetPassword = asyncHandler(async (req, res) => {
   const { userId } = req.params;
