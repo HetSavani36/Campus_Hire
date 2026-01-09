@@ -8,6 +8,7 @@ import { emailOptions, emailQueue } from "../queues/email-queue.js";
 
 const prisma = new PrismaClient();
 import crypto from "crypto";
+import { canStudentApplicationTransition } from "../domain/studentApplicationStateMachine.js";
 
 function createJobHash(data) {
   return crypto
@@ -425,72 +426,86 @@ const postJob = asyncHandler(async (req, res) => {
 
 const makeStudentApplicationDecision = asyncHandler(async (req, res) => {
   const { applicationId } = req.params;
-  const { result } = req.params;
+  const { result } = req.body;
   if (!applicationId || !result) throw new ApiError(403, "please provide studentId and your decision");
-  if (result !== "1" && result !== "0") throw new ApiError(403, "please provide proper decision in either 0 or 1");
+  if ( !["1","0"].includes(result)) throw new ApiError(403, "please provide proper decision in either 0 or 1");
 
-  const status = result === "1" ? "shortlisted" : "rejected";
+  const nextStatus = result === "1" ? "shortlisted" : "rejected";
+  let application=null
+  let occured=false
 
-  const application = await prisma.application.findUnique({
-    where: { id: applicationId },
-    select:{
-      id:true,
-      status:true,
-      student:{
-        select:{
-          user:{
-            select:{
-              name:true,
-              email:true
-            }
-          }
-        }
+  await prisma.$transaction(async(tx)=>{
+    const tempApplication = await tx.application.findUnique({
+      where: { id: applicationId },
+      select: {
+        id: true,
+        status: true,
+        student: {
+          select: {
+            user: {
+              select: {
+                name: true,
+                email: true,
+              },
+            },
+          },
+        },
+        job: {
+          select: {
+            title: true,
+            company: {
+              select: {
+                name: true,
+              },
+            },
+          },
+        },
       },
-      job:{
-        select:{
-          title:true,
-          company:{
-            select:{
-              name:true
-            }
-          }
-        }
+    });
+    if (!tempApplication) throw new ApiError(404, "no such application found");
+
+    const currentStatus = tempApplication.status;
+    if(!canStudentApplicationTransition(currentStatus,nextStatus)) {
+      if(currentStatus===nextStatus) {
+        application = tempApplication;
+        return
+      }
+      else throw new ApiError(409,`invalid job transition from ${currentStatus} to ${nextStatus}`)
+    }
+
+    const updated=await tx.application.updateMany({
+      where:{id:tempApplication.id,status:currentStatus},
+      data:{status:nextStatus}
+    })
+    
+    if(updated.count===1){
+      occured=true
+      application={
+        ...updated,
+        status:nextStatus
       }
     }
-  });
-  if (!application) throw new ApiError(404, "no such application found");
+  })
 
-  if (application.status === "hired")
-    throw new ApiError(403, "the student is already hired");
-  if (application.status === "rejected")
-    throw new ApiError(403, "the student is already rejected");
-  if (application.status === "shortlisted")
-    throw new ApiError(403, "the student is already shortlisted");
-
-  const applicationAfterDecision = await prisma.application.update({
-    where: { id: application.id },
-    data: {
-      status: status,
-    },
-  });
-
-  await emailQueue.add(
-    "student-application-decision-company",
-    {
-      studentName: application.student.user.name,
-      companyName:application.job.company.name,
-      jobTitle:application.job.title,
-      status:status,
-      studentEmail: application.student.user.email,
-    },
-    emailOptions
-  );
+  if(occured){
+    await emailQueue.add(
+      "student-application-decision-company",
+      {
+        studentName: application.student.user.name,
+        companyName:application.job.company.name,
+        jobTitle:application.job.title,
+        status:nextStatus,
+        studentEmail: application.student.user.email,
+      },
+      emailOptions
+    );
+  }
 
   res.json(
     new ApiResponse(
       200,
-      applicationAfterDecision,
-      `the student has been ${status}`
+      application,
+      `the student has been ${nextStatus}`
     )
   );
 });
