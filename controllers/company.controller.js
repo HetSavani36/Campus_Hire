@@ -223,21 +223,29 @@ const resetPassword = asyncHandler(async (req, res) => {
 
 const addSkill = asyncHandler(async (req, res) => {
   const { name } = req.body;
-  if (!name) throw new ApiError(403, "please provide skill name");
+  if (!name) throw new ApiError(400, "please provide skill name");
 
-  const exists = await prisma.skill.findUnique({
-    where: { name: name.toUpperCase() },
-    select:{id:true}
-  });
-  if (exists) return res.json(new ApiResponse(201, exists, "skill already exists"));
+  let occured=false
+  let skill=null
 
-  const skill = await prisma.skill.create({
-    data: {
-      name: name.toUpperCase(),
+  await prisma.$transaction(async(tx)=>{
+    const exists = await tx.skill.findUnique({
+      where: { name: name.toUpperCase() }
+    });
+    if (exists) {
+      skill=exists
+      return
     }
-  });
 
-  res.json(new ApiResponse(201, skill, "new skill added"));
+    skill = await tx.skill.create({
+      data: {
+        name: name.toUpperCase(),
+      }
+    });
+    occured=true
+  })
+
+  res.json(new ApiResponse(201, skill, occured?"new skill added":"skill already exists"));
 });
 
 const postJob = asyncHandler(async (req, res) => {
