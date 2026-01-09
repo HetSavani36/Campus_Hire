@@ -3,86 +3,103 @@ import ApiError from "../utils/ApiError.js";
 import ApiResponse from "../utils/ApiResponse.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { emailOptions, emailQueue } from "../queues/email-queue.js";
+import { canJobTransition } from "../domain/jobStateMachine.js";
 const prisma=new PrismaClient()
 
 const makeStudentApplicationDecision = asyncHandler(async (req, res) => {
     const { applicationId, result } = req.params;
-    if (!applicationId || !result)
-        throw new ApiError(403, "please provide studentId and your decision");
-    if (result !== "1" && result !== "0")
-        throw new ApiError(403, "please provide proper decision in either 0 or 1");
+    if (!applicationId || !result) throw new ApiError(403, "please provide studentId and your decision");
+    if ( !["1","0"].includes(result)) throw new ApiError(403, "please provide proper decision in either 0 or 1");
 
-    const approval = result === "1" ? "approved" : "rejected";
+    const nextStatus = result === "1" ? "approved" : "rejected";
+    let applicationSnapshot=null
+    let occured=false
 
-    const application = await prisma.application.findUnique({
-        where: { id: applicationId },
-        select:{
-          status:true,
-          mentorApproval:true,
-          id:true,
-          student:{
-            select:{
-              user:{
-                select:{
-                  name:true,
-                  email:true
-                }
+    await prisma.$transaction(async(tx)=>{
+      const selectQuery={
+        status:true,
+        mentorApproval:true,
+        id:true,
+        student:{
+          select:{
+            user:{
+              select:{
+                name:true,
+                email:true
               }
             }
-          },
-          mentor:{
-            select:{
-              user:{
-                select:{
-                  name:true
-                }
+          }
+        },
+        mentor:{
+          select:{
+            user:{
+              select:{
+                name:true,
+                id:true
               }
             }
-          },
-          job:{
-            select:{
-              title:true,
-              company:{
-                select:{
-                  name:true
-                }
+          }
+        },
+        job:{
+          select:{
+            title:true,
+            company:{
+              select:{
+                name:true
               }
             }
           }
         }
-    });
-    if (!application) throw new ApiError(404, "no such application found");
+      }
+      const application = await tx.application.findFirst({
+          where: { id: applicationId,mentorId:{not:null},status:"shortlisted" },
+          select:selectQuery
+      });
+      if (!application) throw new ApiError(404, "no such application found");
+      if(application.mentor.user.id!==req.user.id) throw new ApiError(403,"you dont have privilage to approve/reject this application")
 
-    if (application.status === "pending") throw new ApiError(403, "the application is pending for approval by company");
-    if (application.status === "hired") throw new ApiError(403, "the student is already hired");
-    if (application.status === "rejected") throw new ApiError(403, "the student has been rejected");
-    if (application.mentorApproval!==null) throw new ApiError(403,"mentor had already approved/rejected application")
-    
-    const applicationAfterDecision = await prisma.application.update({
-        where: { id: application.id },
-        data: {
-            mentorApproval:approval
+      const currentStatus=application.mentorApproval
+      if(!canJobTransition(currentStatus,nextStatus)){
+        if(currentStatus===nextStatus) {
+          applicationSnapshot=application
+          return
+        }
+        throw new ApiError(409,`cant transit from ${currentStatus} to ${nextStatus}`)
+      }
+
+      const updated=await tx.application.updateMany({
+        where:{id:application.id,mentorApproval:currentStatus},
+        data:{mentorApproval:nextStatus}
+      })
+      if(updated.count===1) {
+        applicationSnapshot={
+          ...application,
+          mentorApproval:nextStatus
+        }
+        occured=true
+      }
+    })
+
+    if(occured){
+      await emailQueue.add(
+        "mentor-decision",
+        {
+          studentName: applicationSnapshot.student.user.name,
+          mentorName:applicationSnapshot.mentor.user.name,
+          companyName:applicationSnapshot.job.company.name,
+          jobTitle:applicationSnapshot.job.title,
+          status: nextStatus,
+          studentEmail: applicationSnapshot.student.user.email,
         },
-    });
-
-    await emailQueue.add(
-      "mentor-decision",
-      {
-        studentName: application.student.user.name,
-        mentorName:application.mentor.user.name,
-        companyName:application.job.company.name,
-        jobTitle:application.job.title,
-        status: approval,
-        studentEmail: application.student.user.name,
-      },
-      emailOptions
-    );
+        emailOptions
+      );
+    }
 
     res.json(
         new ApiResponse(
             200,
-            applicationAfterDecision,
-            `the student application has been ${approval} by mentor`
+            applicationSnapshot,
+            `the student application has been ${nextStatus} by mentor`
         )
     );
 });
