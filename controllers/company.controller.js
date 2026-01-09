@@ -12,14 +12,6 @@ const createEmployee = asyncHandler(async (req, res) => {
   const { name, email, hireDate } = req.body;
   if (!name || !email) throw new ApiError(403, "please provide all details");
 
-  const exists = await prisma.user.findUnique({
-    where: {
-      email: email,
-    },
-    select:{id:true}
-  });
-  if (exists) throw new ApiError(403, "user with this email already exists");
-
   const company = await prisma.company.findUnique({
     where: {
       email: req.user.email,
@@ -29,53 +21,58 @@ const createEmployee = asyncHandler(async (req, res) => {
       name:true
     }
   });
-  if (!company) throw new ApiError(404, "no college found where this user works");
+  if (!company) throw new ApiError(404, "no company found for this user");
 
-  const password = generatePassword(8);
-  const hashedPassword = await hashPassword(password);
   
-  const result = await prisma.$transaction(async (tx) => {
-    const user = await prisma.user.create({
-      data: {
-        name: name,
-        email: email,
-        password: hashedPassword,
-        role: "employee",
-        createdAt: hireDate ? new Date(hireDate) : undefined,
-      },
-      select:{id:true}
-    });
-    
-    const employee = await prisma.employee.create({
-      data: {
-        userId: user.id,
-        companyId: company.id,
-      },
-      select: {
-        id: true,
-        user: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            role: true,
-            createdAt: true,
+  const password = generatePassword(8);
+  let employee=null
+  
+  try {
+    await prisma.$transaction(async(tx)=>{
+      const hashedPassword = await hashPassword(password);
+      const user = await tx.user.create({
+        data: {
+          name: name,
+          email: email,
+          password: hashedPassword,
+          role: "employee",
+          createdAt: hireDate ? new Date(hireDate) : new Date()
+        },
+        select:{id:true}
+      });
+      
+      employee = await tx.employee.create({
+        data: {
+          userId: user.id,
+          companyId: company.id,
+        },
+        select: {
+          id: true,
+          user: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+              role: true,
+              createdAt: true,
+            },
+          },
+          company: {
+            select: {
+              id: true,
+              name: true,
+              address: true,
+              email: true,
+              contactNo: true,
+            },
           },
         },
-        company: {
-          select: {
-            id: true,
-            name: true,
-            address: true,
-            email: true,
-            contactNo: true,
-          },
-        },
-      },
-    });
-    
-    return { user, employee };
-  });
+      });
+    })
+  } catch (err) {
+      if (err.code === "P2002") throw new ApiError(409, "user/employee already exists");
+      throw new ApiError(500, "failed to create employee");
+  }
   
   await emailQueue.add(
     "employee-credentials",
@@ -89,11 +86,7 @@ const createEmployee = asyncHandler(async (req, res) => {
   );
   
   res.json(
-    new ApiResponse(
-      201,
-      result.employee,
-      "employee created successfully"
-    )
+    new ApiResponse( 201, employee, "employee created successfully" ) 
   );
 });
 
