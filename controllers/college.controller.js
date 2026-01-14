@@ -6,6 +6,7 @@ import { generatePassword, hashPassword } from "../utils/password.util.js";
 import { emailOptions, emailQueue } from "../queues/email-queue.js";
 import { canJobTransition } from "../domain/jobStateMachine.js";
 import { canCollabTransition } from "../domain/collabStateMachine.js";
+import { getPagination } from "../utils/pagination.js";
 const prisma = new PrismaClient();
 
 const createMentor = asyncHandler(async (req, res) => {
@@ -430,48 +431,90 @@ const assignMentor = asyncHandler(async (req, res) => {
 
 const getMentorsList = asyncHandler(async (req, res) => {
   const { filter = "all" } = req.query;
+  const { page, limit, skip } = getPagination(req.query);
 
   const college = await prisma.college.findUnique({
     where: { email: req.user.email },
-    select:{id:true}
+    select: { id: true },
   });
   if (!college) throw new ApiError(404, "no such college found");
 
-  let whereClause = {
+  const now = new Date();
+
+  // Common job condition used in filters
+  const activeJobCondition = {
     isApproved: true,
-    collegeId: college.id,
     status: "active",
     mentorId: { not: null },
   };
-  if (filter === "allocated_current" || filter === "available")
-    whereClause.dueDate = { gte: new Date() };
-  if (filter === "allocated_past") whereClause.dueDate = { lt: new Date() };
 
-  let mentors = await prisma.mentor.findMany({
-    where: {
-      collegeId: college.id,
-    },
-    select: {
-      id: true,
-      user: {
-        select: {
-          id: true,
-          name: true,
-          email: true,
+  // Build mentor WHERE clause (THIS IS THE KEY FIX)
+  const mentorWhere = {
+    collegeId: college.id,
+  };
+
+  if (filter === "available") {
+    mentorWhere.jobs = {
+      none: {
+        ...activeJobCondition,
+        dueDate: { gte: now },
+      },
+    };
+  }
+
+  if (filter === "allocated_current") {
+    mentorWhere.jobs = {
+      some: {
+        ...activeJobCondition,
+        dueDate: { gte: now },
+      },
+    };
+  }
+
+  if (filter === "allocated_past") {
+    mentorWhere.jobs = {
+      some: {
+        ...activeJobCondition,
+        dueDate: { lt: now },
+      },
+    };
+  }
+
+  const [mentors, totalMentors] = await prisma.$transaction([
+    prisma.mentor.findMany({
+      where: mentorWhere,
+      skip,
+      take: limit,
+      orderBy: { createdAt: "desc" },
+      select: {
+        id: true,
+        user: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+          },
+        },
+        jobs: {
+          where:
+            filter === "allocated_past"
+              ? { ...activeJobCondition, dueDate: { lt: now } }
+              : { ...activeJobCondition, dueDate: { gte: now } },
+          select: {
+            id: true,
+            title: true,
+            dueDate: true,
+          },
         },
       },
-      jobs: {
-        where: whereClause,
-        select: {
-          id: true,
-          title: true,
-          dueDate: true,
-        },
-      },
-    },
-  });
+    }),
 
-  mentors = mentors.map((mentor) => ({
+    prisma.mentor.count({
+      where: mentorWhere,
+    }),
+  ]);
+
+  const formattedMentors = mentors.map((mentor) => ({
     id: mentor.id,
     userId: mentor.user.id,
     name: mentor.user.name,
@@ -479,12 +522,25 @@ const getMentorsList = asyncHandler(async (req, res) => {
     jobs: mentor.jobs,
   }));
 
-  if(filter==="all") {}
-  else if (filter === "available") mentors = mentors.filter((mentor) => mentor.jobs.length === 0);
-  else mentors = mentors.filter((mentor) => mentor.jobs.length > 0);
-
-  res.json(new ApiResponse(200, mentors, "all mentors fetched successfully"));
+  res.json(
+    new ApiResponse(
+      200,
+      {
+        mentors: formattedMentors,
+        pagination: {
+          page,
+          limit,
+          totalMentors,
+          totalPages: Math.ceil(totalMentors / limit),
+          hasPrevPage: page > 1,
+          hasNextPage: page * limit < totalMentors,
+        },
+      },
+      "mentors fetched successfully"
+    )
+  );
 });
+
 
 const mentorDetails = asyncHandler(async (req, res) => {
   const { filter } = req.query;
