@@ -124,25 +124,43 @@ const getAllJobs=asyncHandler(async(req,res)=>{
     if (filter === "past") whereClause.dueDate = { lt: new Date() };
     if (filter === "current") whereClause.dueDate = { gte: new Date() };
 
-    const jobs=await prisma.job.findMany({
-        where:whereClause,
-        select:{
-            id:true,
-            title:true,
-            salary:true,
-            dueDate:true,
-            company:{
-                select:{
-                    name:true,
-                    email:true
-                }
-            }
-        }
-    })
+    const [jobs,totalJobs]=await prisma.$transaction([
+      prisma.job.findMany({
+          where:whereClause,
+          select:{
+              id:true,
+              title:true,
+              salary:true,
+              dueDate:true,
+              company:{
+                  select:{
+                      name:true,
+                      email:true
+                  }
+              }
+          }
+      }),
+
+      prisma.job.count({where:whereClause})
+    ])
 
     res.json(
-        new ApiResponse(200,jobs,"jobs under mentor")
-    )
+      new ApiResponse(
+        200,
+        {
+          jobs,
+          pagination: {
+            page,
+            limit,
+            totalJobs,
+            totalPages: Math.ceil(totalJobs / limit),
+            hasPrevPage: page > 1,
+            hasNextPage: page * limit < totalJobs,
+          },
+        },
+        "jobs under mentor"
+      )
+    );
 })
 
 
