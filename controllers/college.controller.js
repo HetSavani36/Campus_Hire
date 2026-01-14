@@ -601,14 +601,11 @@ const mentorDetails = asyncHandler(async (req, res) => {
 });
 
 const getAllCollabRequests = asyncHandler(async (req, res) => {
+  const allowedStatus=["accepted","rejected","pending"]
   let { status = "pending" } = req.query;
-  if (
-    status &&
-    status !== "accepted" &&
-    status !== "rejected" &&
-    status !== "pending"
-  )
-    status = "pending";
+  if(!allowedStatus.includes(status)) status="pending"
+
+  const { page, limit, skip } = getPagination(req.query);
 
   const college = await prisma.college.findUnique({
     where: { email: req.user.email },
@@ -616,29 +613,55 @@ const getAllCollabRequests = asyncHandler(async (req, res) => {
   });
   if (!college) throw new ApiError(404, "no such college found");
 
-  let collabRequests = await prisma.collab.findMany({
-    where: {
-      collegeId: college.id,
-      status: status,
-    },
-    select: {
-      id: true,
-      company: {
-        select: {
-          id: true,
-          name: true,
-          address: true,
+  let [collabRequests, totalRequests] = await prisma.$transaction([
+    prisma.collab.findMany({
+      where: {
+        collegeId: college.id,
+        status: status,
+      },
+      skip: skip,
+      take: limit,
+      orderBy: { createdAt: "desc" },
+      select: {
+        id: true,
+        company: {
+          select: {
+            id: true,
+            name: true,
+            address: true,
+          },
         },
       },
-    },
-  });
+    }),
+
+    prisma.collab.count({
+      where: { collegeId: college.id, status: status },
+    }),
+  ]);
+
 
   collabRequests=collabRequests.map((request)=>({
     ...request,
     status:status
   }))
 
-  res.json(new ApiResponse(200, collabRequests, "collab requests"));
+  res.json(
+    new ApiResponse(
+      200,
+      {
+        collabRequests,
+        pagination: {
+          page,
+          limit,
+          totalRequests,
+          totalPages: Math.ceil(totalRequests / limit),
+          hasPrevPage: page > 1,
+          hasNextPage: page * limit < totalRequests,
+        },
+      },
+      "collab requests"
+    )
+  );
 });
 
 const getCompanyDetails = asyncHandler(async (req, res) => {
@@ -675,7 +698,8 @@ const getCompanyDetails = asyncHandler(async (req, res) => {
 
 const getAllJobRequests = asyncHandler(async (req, res) => {
   let { filter = "PENDING" } = req.query;
-  
+  const { page, limit, skip } = getPagination(req.query);
+
   const college = await prisma.college.findUnique({
     where: { email: req.user.email },
     select: { id: true },
@@ -716,27 +740,37 @@ const getAllJobRequests = asyncHandler(async (req, res) => {
     throw new ApiError(400, "invalid filter");
   }
 
-  let jobRequests = await prisma.job.findMany({
-    where: whereClause,
-    select: {
-      id: true,
-      title: true,
-      salary: true,
-      dueDate: true,
-      isApproved: true,
-      createdAt: true,
-      company: {
-        select: { name: true },
-      },
-      mentor: {
-        select: {
-          user: {
-            select: { name: true },
+  let [jobRequests,totalRequests]=await prisma.$transaction([
+    prisma.job.findMany({
+      where: whereClause,
+      skip:skip,
+      take:limit,
+      orderBy:{createdAt:"desc"},
+      select: {
+        id: true,
+        title: true,
+        salary: true,
+        dueDate: true,
+        isApproved: true,
+        createdAt: true,
+        company: {
+          select: { name: true },
+        },
+        mentor: {
+          select: {
+            user: {
+              select: { name: true },
+            },
           },
         },
       },
-    },
-  });
+    }),
+
+    prisma.job.count({
+      where:whereClause
+    })
+  ])
+
 
   jobRequests = jobRequests.map((job) => ({
     id: job.id,
@@ -749,7 +783,23 @@ const getAllJobRequests = asyncHandler(async (req, res) => {
   }));
 
 
-  res.json(new ApiResponse(200, jobRequests, "job requests"));
+  res.json(
+    new ApiResponse(
+      200,
+      {
+        jobRequests,
+        pagination: {
+          page,
+          limit,
+          totalRequests,
+          totalPages: Math.ceil(totalRequests / limit),
+          hasPrevPage: page > 1,
+          hasNextPage: page * limit < totalRequests,
+        },
+      },
+      "job requests"
+    )
+  );
 });
 
 
