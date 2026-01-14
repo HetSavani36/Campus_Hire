@@ -835,6 +835,9 @@ const getAllJobs = asyncHandler(async (req, res) => {
   let [jobs,totalJobs]=await prisma.$transaction([
     prisma.job.findMany({
       where: whereClause,
+      skip:skip,
+      take:limit,
+      orderBy:{createdAt:"desc"},
       select: {
         id: true,
         title: true,
