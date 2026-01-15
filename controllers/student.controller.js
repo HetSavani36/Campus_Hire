@@ -402,80 +402,156 @@ const apply = asyncHandler(async (req, res) => {
 });
 
 const getJobsList = asyncHandler(async (req, res) => {
-  //current,past,shortlisted,hired,rejected,pending,menterApproval_pending,menterApproval_rejected,menterApproval_approved,applied,not_applied
   const { filter = "current" } = req.query;
+  const { page, limit, skip } = getPagination(req.query);
 
   const student = await prisma.student.findUnique({
     where: { userId: req.user.id },
     select: {
       id: true,
-      userId: true,
       collegeId: true,
     },
   });
   if (!student) throw new ApiError(404, "no such student found");
 
-  let jobs = [];
-  const jobProjector = {
+  const now = new Date();
+
+  const jobSelect = {
     id: true,
     title: true,
     salary: true,
     dueDate: true,
   };
 
-  if (filter === "current" || filter === "past" || filter === "all") {
-    let whereClause = {
+  let jobs = [];
+  let totalJobs = 0;
+
+  /* --------------------------------------------------
+     JOB-BASED FILTERS
+  -------------------------------------------------- */
+  if (["current", "past", "all"].includes(filter)) {
+    const whereClause = {
       status: "active",
       collegeId: student.collegeId,
       isApproved: true,
       mentorId: { not: null },
+      ...(filter === "current" && { dueDate: { gte: now } }),
+      ...(filter === "past" && { dueDate: { lt: now } }),
     };
-    if (filter === "past") whereClause.dueDate = { lt: new Date() };
-    if (filter === "current") whereClause.dueDate = { gte: new Date() };
 
-    jobs = await prisma.job.findMany({
-      where: whereClause,
-      select: jobProjector,
-    });
-  } else {
-    let whereClause = {
+    const [rows, count] = await prisma.$transaction([
+      prisma.job.findMany({
+        where: whereClause,
+        skip,
+        take: limit,
+        orderBy: { dueDate: "asc" },
+        select: jobSelect,
+      }),
+      prisma.job.count({ where: whereClause }),
+    ]);
+
+    jobs = rows;
+    totalJobs = count;
+  } else if (
+
+  /* --------------------------------------------------
+     APPLICATION-BASED FILTERS
+  -------------------------------------------------- */
+    [
+      "pending",
+      "rejected",
+      "shortlisted",
+      "hired",
+      "mentor_approval_pending",
+      "mentor_approval_approved",
+      "mentor_approval_rejected",
+    ].includes(filter)
+  ) {
+    const whereClause = {
       studentId: student.id,
+      ...(filter === "pending" && { status: "pending" }),
+      ...(filter === "rejected" && { status: "rejected" }),
+      ...(filter === "shortlisted" && { status: "shortlisted" }),
+      ...(filter === "hired" && { status: "hired" }),
+      ...(filter === "mentor_approval_pending" && {
+        mentorApproval: "pending",
+      }),
+      ...(filter === "mentor_approval_approved" && {
+        mentorApproval: "approved",
+      }),
+      ...(filter === "mentor_approval_rejected" && {
+        mentorApproval: "rejected",
+      }),
     };
-    if (filter === "pending") whereClause.status = "pending";
-    if (filter === "rejected") whereClause.status = "rejected";
-    if (filter === "shortlisted") whereClause.status = "shortlisted";
-    if (filter === "hired") whereClause.status = "hired";
 
-    if (filter === "mentor_approval_pending")
-      whereClause.mentorApproval = "pending";
-    if (filter === "mentor_approval_approved")
-      whereClause.mentorApproval = "approved";
-    if (filter === "mentor_approval_rejected")
-      whereClause.mentorApproval = "rejected";
+    const [rows, count] = await prisma.$transaction([
+      prisma.application.findMany({
+        where: whereClause,
+        skip,
+        take: limit,
+        orderBy: { appliedAt: "desc" },
+        select: {
+          job: { select: jobSelect },
+        },
+      }),
+      prisma.application.count({ where: whereClause }),
+    ]);
 
-    const applications = await prisma.application.findMany({
-      where: whereClause,
-      select: {
-        job: {
-          select: jobProjector,
+    jobs = rows.map((r) => r.job);
+    totalJobs = count;
+  } else if (filter === "not_applied") {
+
+  /* --------------------------------------------------
+     NOT APPLIED
+  -------------------------------------------------- */
+    const whereClause = {
+      status: "active",
+      collegeId: student.collegeId,
+      isApproved: true,
+      mentorId: { not: null },
+      applications: {
+        none: {
+          studentId: student.id,
         },
       },
-    });
-    jobs = applications.map((application) => application.job);
+    };
 
-    if (filter === "not_applied") {
-      const appliedJobIds = jobs.map((job) => job.id);
-      jobs = await prisma.job.findMany({
-        where: {
-          id: { notIn: appliedJobIds },
-        },
-        select: jobProjector,
-      });
-    }
+    const [rows, count] = await prisma.$transaction([
+      prisma.job.findMany({
+        where: whereClause,
+        skip,
+        take: limit,
+        orderBy: { dueDate: "asc" },
+        select: jobSelect,
+      }),
+      prisma.job.count({ where: whereClause }),
+    ]);
+
+    jobs = rows;
+    totalJobs = count;
+  } else {
+    throw new ApiError(400, "invalid filter");
   }
 
-  res.json(new ApiResponse(200, jobs, "student jobs"));
+  res.json(
+    new ApiResponse(
+      200,
+      {
+        jobs,
+        pagination: {
+          page,
+          limit,
+          totalJobs,
+          totalPages: Math.ceil(totalJobs / limit),
+          hasPrevPage: page > 1,
+          hasNextPage: page * limit < totalJobs,
+        },
+      },
+      "student jobs"
+    )
+  );
 });
+
 
 const getJobDetail = asyncHandler(async (req, res) => {
   const { jobId } = req.params;
