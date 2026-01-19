@@ -1,14 +1,7 @@
 import { redisConnection } from "../config/redis";
 import ApiError from "../utils/ApiError.js";
 
-const rateLimitLogin = async (req, res, next) => {
-  const email = req.body?.email || req.ip;
-  if (!email) return next();
-
-  const key = `rl:login:${email}`;
-
-  const capacity = 5; // burst
-  const refillRate = 1 / 30; // 1 token every 30 seconds
+const rateLimit = async (req, res, next,key,capacity,refillRate) => {
   const now = Date.now();
 
   const data = await redisConnection.hgetall(key);
@@ -38,5 +31,13 @@ const rateLimitLogin = async (req, res, next) => {
 
   next();
 };
+
+const rateLimitLogin = async(req,res,next)=>{
+  const email = req.body?.email || req.ip;
+  if (!email) return next();
+
+  const key = `rl:login:${email}`;
+  await rateLimit(req,res,next,key,5,1/30)
+}
 
 export {rateLimitLogin}
