@@ -1,7 +1,7 @@
 import { redisConnection } from "../config/redis";
 import ApiError from "../utils/ApiError.js";
 
-const rateLimit = async (req, res, next,key,capacity,refillRate) => {
+const rateLimit = async (req, res, next,key,capacity,refillRate,apiName) => {
   const now = Date.now();
 
   const data = await redisConnection.hgetall(key);
@@ -17,7 +17,7 @@ const rateLimit = async (req, res, next,key,capacity,refillRate) => {
   if (tokens < 1) {
     const retryAfter = Math.ceil((1 - tokens) / refillRate);
     res.setHeader("Retry-After", retryAfter);
-    throw new ApiError(429,`Too many login attempts. Try again in ${retryAfter}s`);
+    throw new ApiError(429,`Too many ${apiName} attempts. Try again in ${retryAfter}s`);
   }
 
   tokens -= 1;
@@ -37,7 +37,7 @@ const rateLimitLogin = async(req,res,next)=>{
   if (!email) return next();
 
   const key = `rl:login:${email}`;
-  await rateLimit(req,res,next,key,5,1/30)
+  await rateLimit(req,res,next,key,5,1/30,"login")
 }
 
 export {rateLimitLogin}
