@@ -32,12 +32,78 @@ const rateLimit = async (req, res, next,key,capacity,refillRate,apiName) => {
   next();
 };
 
-const rateLimitLogin = async(req,res,next)=>{
-  const email = req.body?.email || req.ip;
-  if (!email) return next();
+const rateLimitLogin = async (req, res, next) => {
+  const email = req.body?.email;
+  const ip = req.ip;
 
-  const key = `rl:login:${email}`;
-  await rateLimit(req,res,next,key,5,1/30,"login")
-}
+  if (email) await rateLimit(req, res, next, `rl:login:email:${email}`, 5, 1/30, "login");
+  await rateLimit(req, res, next, `rl:login:ip:${ip}`, 20, 1/10, "login");
 
-export {rateLimitLogin}
+  next();
+};
+
+const rateLimitRegisterCollege = async (req, res, next) => {
+  const email = req.body?.email;
+  const ip = req.ip;
+
+  if (email) await rateLimit(req, res, next, `rl:register:college:email:${email}`, 3, 1/120, "college registration");
+  await rateLimit(req, res, next, `rl:register:college:ip:${ip}`, 15, 1/30, "college registration");
+
+  next();
+};
+
+const rateLimitRegisterCompany = async (req, res, next) => {
+  const email = req.body?.email;
+  const ip = req.ip;
+
+  if (email) await rateLimit(req, res, next, `rl:register:company:email:${email}`, 3, 1/120, "company registration");
+  await rateLimit(req, res, next, `rl:register:company:ip:${ip}`, 15, 1/30, "company registration");
+
+  next();
+};
+
+const rateLimitLogout  = async (req, res, next) => {
+  const userId = req.user.id;
+  const ip = req.ip;
+
+  await rateLimit(req, res, next, `rl:logout:user:${userId}`, 30, 1/2, "logout");
+  await rateLimit(req, res, next, `rl:logout:ip:${ip}`, 100, 1 / 1, "logout");
+
+  next();
+};
+
+const rateLimitRefresh = async (req, res, next) => {
+  const refreshToken = req.cookies?.refreshToken;
+  const ip = req.ip;
+
+  if (!refreshToken) throw new ApiError(401, "No refresh token");
+
+  const decoded = verifyRefreshToken(refreshToken); // contains sessionId
+
+  const sessionId = decoded.sessionId;
+
+  await rateLimit(req, res, next, `rl:refresh:session:${sessionId}`, 60, 1/2, "refresh token");
+  await rateLimit(req, res, next, `rl:refresh:ip:${ip}`, 120, 1/1, "refresh token");
+
+  next();
+};
+
+
+const rateLimitMe  = async (req, res, next) => {
+  const userId = req.user.id;
+  const ip = req.ip;
+
+  await rateLimit(req, res, next, `rl:me:user:${userId}`, 100, 1/1, "profile");
+  await rateLimit(req, res, next, `rl:me:ip:${ip}`, 200, 1 / 1, "profile");
+
+  next();
+};
+
+export {
+  rateLimitLogin,
+  rateLimitRegisterCollege,
+  rateLimitRegisterCompany,
+  rateLimitLogout,
+  rateLimitRefresh,
+  rateLimitMe
+};
