@@ -221,6 +221,147 @@ const rateLimitExportMentors  = async (req, res, next) => {
   next();
 };
 
+const rateLimitExportEmployees  = async (req, res, next) => {
+  const id = req.user.id;
+  const ip = req.ip;
+
+  await rateLimit(req, res, next, `rl:export:employees:user:${id}`, 3, 1/30, "export employees");
+  await rateLimit(req, res, next, `rl:export:employees:ip:${ip}`, 10, 1/20, "export employees");
+
+  next();
+};
+
+const rateLimitEmployeesForCompany  = async (req, res, next) => {
+  const id = req.user.id;
+  const ip = req.ip;
+
+  await rateLimit(req, res, next, `rl:company:employees:user:${id}`, 60, 1/1, "company employees");
+  await rateLimit(req, res, next, `rl:company:employees:ip:${ip}`, 120, 1/1, "company employees");
+
+  next();
+};
+
+const rateLimitEmployeeDetailsForCompany  = async (req, res, next) => {
+  const id = req.user.id;
+  const ip = req.ip;
+
+  await rateLimit(req, res, next, `rl:company:employee:details:user:${id}`, 60, 1/1, "employee details");
+  await rateLimit(req, res, next, `rl:company:employee:details:ip:${ip}`, 120, 1/1, "employee details");
+
+  next();
+};
+
+const rateLimitCollegesForCompany  = async (req, res, next) => {
+  const id = req.user.id;
+  const ip = req.ip;
+
+  await rateLimit(req, res, next, `rl:company:colleges:user:${id}`, 60, 1/1, "colleges");
+  await rateLimit(req, res, next, `rl:company:colleges:ip:${ip}`, 120, 1/1, "colleges");
+
+  next();
+};
+
+const rateLimitCollegeDetailsForCompany  = async (req, res, next) => {
+  const id = req.user.id;
+  const ip = req.ip;
+
+  await rateLimit(req, res, next, `rl:company:college:details:user:${id}`, 60, 1/1, "college details");
+  await rateLimit(req, res, next, `rl:company:college:details:ip:${ip}`, 120, 1/1, "college details");
+
+  next();
+};
+
+const rateLimitSkillsForCompany  = async (req, res, next) => {
+  const id = req.user.id;
+  const ip = req.ip;
+
+  await rateLimit(req, res, next, `rl:company:skills:user:${id}`, 60, 1/1, "skills");
+  await rateLimit(req, res, next, `rl:company:skills:ip:${ip}`, 120, 1/1, "skills");
+
+  next();
+};
+
+const rateLimitJobsForCompany  = async (req, res, next) => {
+  const id = req.user.id;
+  const ip = req.ip;
+
+  await rateLimit(req, res, next, `rl:company:jobs:user:${id}`, 60, 1/1, "jobs");
+  await rateLimit(req, res, next, `rl:company:jobs:ip:${ip}`, 120, 1/1, "jobs");
+
+  next();
+};
+
+const rateLimitJobDetailsForCompany  = async (req, res, next) => {
+  const id = req.user.id;
+  const ip = req.ip;
+
+  await rateLimit(req, res, next, `rl:company:job:details:user:${id}`, 60, 1/1, "job details");
+  await rateLimit(req, res, next, `rl:company:job:details:ip:${ip}`, 120, 1/1, "job details");
+
+  next();
+};
+
+
+const rateLimitCreateEmployee=async(req,res,next)=>{
+  const id = req.user.id
+  const ip = req.ip;
+
+  await rateLimit(req, res, next, `rl:create:employee:user:${id}`, 5, 1/30, "employee creation");
+  await rateLimit(req, res, next, `rl:create:employee:ip:${ip}`, 20, 1/10, "employee creation");
+  
+  next();
+}
+
+const rateLimitCollabRequest=async(req,res,next)=>{
+  const id = req.user.id
+  const ip = req.ip;
+
+  await rateLimit(req, res, next, `rl:collab:request:user:${id}`, 10, 1/20, "collab request");
+  await rateLimit(req, res, next, `rl:collab:request:ip:${ip}`, 30, 1/10, "collab request");
+  
+  next();
+}
+
+const rateLimitCompanyResetPassword=async(req,res,next)=>{
+  const id = req.user.id
+  const ip = req.ip;
+
+  await rateLimit(req, res, next, `rl:company:reset:password:user:${id}`, 3, 1/120, "reset password");
+  await rateLimit(req, res, next, `rl:company:reset:password:ip:${ip}`, 10, 1/30, "reset password");
+  
+  next();
+}
+
+const rateLimitPostJob = async(req,res,next)=>{
+  const id = req.user.id
+  const ip = req.ip;
+
+  await rateLimit(req, res, next, `rl:post:job:user:${id}`, 3, 1/120, "post job");
+  await rateLimit(req, res, next, `rl:post:job:ip:${ip}`, 10, 1/30, "post job");
+  
+  next();
+}
+
+const rateLimitAddSkillForCompany = async(req,res,next)=>{
+  const id = req.user.id
+  const ip = req.ip;
+
+  await rateLimit(req, res, next, `rl:company:add:skill:user:${id}`, 10, 1/20, "add skill");
+  await rateLimit(req, res, next, `rl:company:add:skill:ip:${ip}`, 30, 1/10, "add skill");
+  
+  next();
+}
+
+const rateLimitStudentApplicationDecisionForCompany = async(req,res,next)=>{
+  const id = req.user.id
+  const ip = req.ip;
+
+  await rateLimit(req, res, next, `rl:company:student:application:decision:user:${id}`, 5, 1/45, "application decision");
+  await rateLimit(req, res, next, `rl:company:student:application:decision:ip:${ip}`, 30, 1/15, "application decision");
+  
+  next();
+}
+
 export {
   rateLimitLogin,
   rateLimitRegisterCollege,
@@ -239,5 +380,19 @@ export {
   rateLimitCompanyDetailsForCollege,
   rateLimitJobRequestsForCollege,
   rateLimitJobDetailsForCollege,
-  rateLimitExportMentors
+  rateLimitExportMentors,
+  rateLimitExportEmployees,
+  rateLimitEmployeesForCompany,
+  rateLimitEmployeeDetailsForCompany,
+  rateLimitCollegesForCompany,
+  rateLimitCollegeDetailsForCompany,
+  rateLimitSkillsForCompany,
+  rateLimitJobsForCompany,
+  rateLimitJobDetailsForCompany,
+  rateLimitCreateEmployee,
+  rateLimitCollabRequest,
+  rateLimitCompanyResetPassword,
+  rateLimitPostJob,
+  rateLimitAddSkillForCompany,
+  rateLimitStudentApplicationDecisionForCompany
 };
