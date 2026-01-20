@@ -12,6 +12,7 @@ router.post("/profile", verifyJWT, authorizeRole("student"), createProfile);
 router.put("/profile", verifyJWT, authorizeRole("student"),hasCompletedProfile,editProfile);
 router.post("/add/skill", verifyJWT, authorizeRole("student"),hasCompletedProfile,addSkill);
 router.post("/apply/:jobId", verifyJWT, authorizeRole("student"),hasCompletedProfile,apply);
+
 router.get("/jobs", verifyJWT, authorizeRole("student"),hasCompletedProfile,getJobsList);
 router.get("/job/:jobId", verifyJWT, authorizeRole("student"),hasCompletedProfile,getJobDetail);
 
