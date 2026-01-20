@@ -362,6 +362,16 @@ const rateLimitStudentApplicationDecisionForCompany = async(req,res,next)=>{
   next();
 }
 
+const rateLimitStudentApplicationDecisionForMentor = async(req,res,next)=>{
+  const id = req.user.id
+  const ip = req.ip;
+
+  await rateLimit(req, res, next, `rl:mentor:student:application:decision:user:${id}`, 5, 1/45, "application decision");
+  await rateLimit(req, res, next, `rl:mentor:student:application:decision:ip:${ip}`, 30, 1/15, "application decision");
+  
+  next();
+}
+
 export {
   rateLimitLogin,
   rateLimitRegisterCollege,
@@ -394,5 +404,6 @@ export {
   rateLimitCompanyResetPassword,
   rateLimitPostJob,
   rateLimitAddSkillForCompany,
-  rateLimitStudentApplicationDecisionForCompany
+  rateLimitStudentApplicationDecisionForCompany,
+  rateLimitStudentApplicationDecisionForMentor
 };
