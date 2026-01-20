@@ -382,6 +382,76 @@ const rateLimitChangePassword=async(req,res,next)=>{
   next();
 }
 
+const rateLimitJobsForStudent  = async (req, res, next) => {
+  const id = req.user.id;
+  const ip = req.ip;
+
+  await rateLimit(req, res, next, `rl:student:jobs:user:${id}`, 60, 1/1, "jobs");
+  await rateLimit(req, res, next, `rl:student:jobs:ip:${ip}`, 120, 1/1, "jobs");
+
+  next();
+};
+
+
+const rateLimitJobDetailsForStudent  = async (req, res, next) => {
+  const id = req.user.id;
+  const ip = req.ip;
+
+  await rateLimit(req, res, next, `rl:student:job:details:user:${id}`, 60, 1/1, "job details");
+  await rateLimit(req, res, next, `rl:student:job:details:ip:${ip}`, 120, 1/1, "job details");
+
+  next();
+};
+
+const rateLimitUploadBulkStudents  = async (req, res, next) => {
+  const id = req.user.id;
+  const ip = req.ip;
+
+  await rateLimit(req, res, next, `rl:upload:bulk:students:user:${id}`, 3, 1/120, "bulk students uploadation");
+  await rateLimit(req, res, next, `rl:upload:bulk:students:ip:${ip}`, 7, 1/60, "bulk students uploadation");
+
+  next();
+};
+
+const rateLimitCreateStudentProfile  = async (req, res, next) => {
+  const id = req.user.id;
+  const ip = req.ip;
+
+  await rateLimit(req, res, next, `rl:student:create:profile:user:${id}`, 3, 1/60, "create student profile");
+  await rateLimit(req, res, next, `rl:student:create:profile:ip:${ip}`, 30, 1/20, "create student profile");
+
+  next();
+};
+
+const rateLimitEditStudentProfile  = async (req, res, next) => {
+  const id = req.user.id;
+  const ip = req.ip;
+
+  await rateLimit(req, res, next, `rl:student:edit:profile:user:${id}`, 5, 1/30, "edit student profile");
+  await rateLimit(req, res, next, `rl:student:edit:profile:ip:${ip}`, 20, 1/20, "edit student profile");
+
+  next();
+};
+
+const rateLimitAddSkillForStudent = async(req,res,next)=>{
+  const id = req.user.id
+  const ip = req.ip;
+
+  await rateLimit(req, res, next, `rl:student:add:skill:user:${id}`, 10, 1/20, "add skill");
+  await rateLimit(req, res, next, `rl:student:add:skill:ip:${ip}`, 30, 1/10, "add skill");
+  
+  next();
+}
+
+const rateLimitApplyInJob = async(req,res,next)=>{
+  const id = req.user.id
+  const ip = req.ip;
+
+  await rateLimit(req, res, next, `rl:apply:job:user:${id}`, 5, 1/30, "apply job");
+  await rateLimit(req, res, next, `rl:apply:job:ip:${ip}`, 30, 1/20, "apply job");
+  
+  next();
+}
 
 export {
   rateLimitLogin,
@@ -417,5 +487,12 @@ export {
   rateLimitAddSkillForCompany,
   rateLimitStudentApplicationDecisionForCompany,
   rateLimitStudentApplicationDecisionForMentor,
-  rateLimitChangePassword
+  rateLimitChangePassword,
+  rateLimitJobsForStudent,
+  rateLimitJobDetailsForStudent,
+  rateLimitUploadBulkStudents,
+  rateLimitCreateStudentProfile,
+  rateLimitEditStudentProfile,
+  rateLimitAddSkillForStudent,
+  rateLimitApplyInJob
 };
