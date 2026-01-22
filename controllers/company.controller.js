@@ -516,7 +516,7 @@ const makeStudentApplicationDecision = asyncHandler(async (req, res) => {
 
 const getEmployeesList = asyncHandler(async (req, res) => {
   const { search } = req.query;
-  const { page, limit, skip } = getPagination(req.query);
+  const { page, limit } = getPagination(req.query);
 
   const company = await prisma.company.findUnique({
     where: { email: req.user.email },
@@ -638,7 +638,7 @@ const getEmployeeDetail = asyncHandler(async (req, res) => {
 
 const getAllColleges = asyncHandler(async (req, res) => {
   let { filter = "all" } = req.query;
-  const { page, limit, skip } = getPagination(req.query);
+  const { page, limit } = getPagination(req.query);
 
   const company = await prisma.company.findUnique({
     where: { email: req.user.email },
@@ -818,7 +818,7 @@ const getAllJobs = asyncHandler(async (req, res) => {
   });
   if (!company) throw new ApiError(404, "no such company found");
 
-  const { page, limit, skip } = getPagination(req.query);
+  const { page, limit } = getPagination(req.query);
   let { filter = "current" } = req.query;
 
   const whereClause = {

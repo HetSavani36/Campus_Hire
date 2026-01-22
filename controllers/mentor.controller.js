@@ -106,7 +106,7 @@ const makeStudentApplicationDecision = asyncHandler(async (req, res) => {
 
 const getAllJobs=asyncHandler(async(req,res)=>{
     const {filter="current"}=req.query
-    const { page, limit, skip } = getPagination(req.query);
+    const { page, limit } = getPagination(req.query);
 
     const mentor=await prisma.mentor.findUnique({
         where:{userId:req.user.id},

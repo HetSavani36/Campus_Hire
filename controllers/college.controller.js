@@ -431,7 +431,7 @@ const assignMentor = asyncHandler(async (req, res) => {
 
 const getMentorsList = asyncHandler(async (req, res) => {
   const { filter = "all" } = req.query;
-  const { page, limit, skip } = getPagination(req.query);
+  const { page, limit  } = getPagination(req.query);
 
   const college = await prisma.college.findUnique({
     where: { email: req.user.email },
@@ -605,7 +605,7 @@ const getAllCollabRequests = asyncHandler(async (req, res) => {
   let { status = "pending" } = req.query;
   if(!allowedStatus.includes(status)) status="pending"
 
-  const { page, limit, skip } = getPagination(req.query);
+  const { page, limit } = getPagination(req.query);
 
   const college = await prisma.college.findUnique({
     where: { email: req.user.email },
@@ -698,7 +698,7 @@ const getCompanyDetails = asyncHandler(async (req, res) => {
 
 const getAllJobRequests = asyncHandler(async (req, res) => {
   let { filter = "PENDING" } = req.query;
-  const { page, limit, skip } = getPagination(req.query);
+  const { page, limit } = getPagination(req.query);
 
   const college = await prisma.college.findUnique({
     where: { email: req.user.email },
