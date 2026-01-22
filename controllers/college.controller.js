@@ -7,6 +7,7 @@ import { emailOptions, emailQueue } from "../queues/email-queue.js";
 import { canJobTransition } from "../domain/jobStateMachine.js";
 import { canCollabTransition } from "../domain/collabStateMachine.js";
 import { getPagination } from "../utils/pagination.js";
+import { redisConnection } from "../config/redis.js";
 const prisma = new PrismaClient();
 
 const createMentor = asyncHandler(async (req, res) => {
@@ -82,6 +83,8 @@ const createMentor = asyncHandler(async (req, res) => {
     },
     emailOptions
   );
+
+  await redisConnection.incr(`college:${college.id}:mentors:version`)
 
   res.json(
     new ApiResponse( 201, mentor, "mentor created successfully" )
@@ -346,6 +349,8 @@ const jobApprovalDecision = asyncHandler(async (req, res) => {
 
   };
 
+  await redisConnection.incr(`college:${college.id}:mentors:version`);
+
   res.json(
     new ApiResponse(
       200,
@@ -425,19 +430,35 @@ const assignMentor = asyncHandler(async (req, res) => {
     );
   }
 
+  await redisConnection.incr(`college:${college.id}:mentors:version`);
+
   res.json(new ApiResponse(200, {mentorAssigned:occured,mentor}, occured?"mentor assigned successfully":"mentor already assigned"));
 });
 
 
 const getMentorsList = asyncHandler(async (req, res) => {
   const { filter = "all" } = req.query;
-  const { page, limit  } = getPagination(req.query);
+  const { page, limit, skip } = getPagination(req.query);
 
   const college = await prisma.college.findUnique({
     where: { email: req.user.email },
     select: { id: true },
   });
   if (!college) throw new ApiError(404, "no such college found");
+
+  const version=( await redisConnection.get(`college:${college.id}:mentors:version`) ) || 1
+
+  const cacheKey=`college:${college.id}:mentors:v${version}:filter:${filter}:page:${page}:limit:${limit}`
+  const cached=await redisConnection.get(cacheKey)
+  if(cached){
+    return res.json(
+      new ApiResponse(
+        200,
+        JSON.parse(cached),
+        "mentors fetched successfully(cached)",
+      ),
+    );
+  }
 
   const now = new Date();
 
@@ -485,7 +506,7 @@ const getMentorsList = asyncHandler(async (req, res) => {
       where: mentorWhere,
       skip,
       take: limit,
-      orderBy: { createdAt: "desc" },
+      orderBy: { id:"desc" },
       select: {
         id: true,
         user: {
@@ -522,20 +543,24 @@ const getMentorsList = asyncHandler(async (req, res) => {
     jobs: mentor.jobs,
   }));
 
+  const responsePayLoad = {
+    mentors: formattedMentors,
+    pagination: {
+      page,
+      limit,
+      totalMentors,
+      totalPages: Math.ceil(totalMentors / limit),
+      hasPrevPage: page > 1,
+      hasNextPage: skip + formattedMentors.length < totalMentors,
+    },
+  };
+
+  await redisConnection.setex(cacheKey,60,JSON.stringify(responsePayLoad))
+
   res.json(
     new ApiResponse(
       200,
-      {
-        mentors: formattedMentors,
-        pagination: {
-          page,
-          limit,
-          totalMentors,
-          totalPages: Math.ceil(totalMentors / limit),
-          hasPrevPage: page > 1,
-          hasNextPage: page * limit < totalMentors,
-        },
-      },
+      responsePayLoad,
       "mentors fetched successfully"
     )
   );
@@ -605,7 +630,7 @@ const getAllCollabRequests = asyncHandler(async (req, res) => {
   let { status = "pending" } = req.query;
   if(!allowedStatus.includes(status)) status="pending"
 
-  const { page, limit } = getPagination(req.query);
+  const { page, limit ,skip } = getPagination(req.query);
 
   const college = await prisma.college.findUnique({
     where: { email: req.user.email },
@@ -656,7 +681,7 @@ const getAllCollabRequests = asyncHandler(async (req, res) => {
           totalRequests,
           totalPages: Math.ceil(totalRequests / limit),
           hasPrevPage: page > 1,
-          hasNextPage: page * limit < totalRequests,
+          hasNextPage: skip+collabRequests.length < totalRequests,
         },
       },
       "collab requests"
@@ -698,7 +723,7 @@ const getCompanyDetails = asyncHandler(async (req, res) => {
 
 const getAllJobRequests = asyncHandler(async (req, res) => {
   let { filter = "PENDING" } = req.query;
-  const { page, limit } = getPagination(req.query);
+  const { page, limit, skip } = getPagination(req.query);
 
   const college = await prisma.college.findUnique({
     where: { email: req.user.email },
@@ -794,7 +819,7 @@ const getAllJobRequests = asyncHandler(async (req, res) => {
           totalRequests,
           totalPages: Math.ceil(totalRequests / limit),
           hasPrevPage: page > 1,
-          hasNextPage: page * limit < totalRequests,
+          hasNextPage: skip+jobRequests.length < totalRequests,
         },
       },
       "job requests"

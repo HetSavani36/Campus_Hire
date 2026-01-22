@@ -1,4 +1,4 @@
-import { redisConnection } from "../config/redis";
+import { redisConnection } from "../config/redis.js";
 import ApiError from "../utils/ApiError.js";
 import { verifyRefreshToken } from "../utils/jwt.util.js";
 

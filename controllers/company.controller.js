@@ -516,7 +516,7 @@ const makeStudentApplicationDecision = asyncHandler(async (req, res) => {
 
 const getEmployeesList = asyncHandler(async (req, res) => {
   const { search } = req.query;
-  const { page, limit } = getPagination(req.query);
+  const { page, limit, skip } = getPagination(req.query);
 
   const company = await prisma.company.findUnique({
     where: { email: req.user.email },
@@ -574,7 +574,7 @@ const getEmployeesList = asyncHandler(async (req, res) => {
           totalEmployees,
           totalPages: Math.ceil(totalEmployees / limit),
           hasPrevPage: page > 1,
-          hasNextPage: page * limit < totalEmployees,
+          hasNextPage: skip+employees.length < totalEmployees,
         },
       },
       "employees list"
@@ -638,7 +638,7 @@ const getEmployeeDetail = asyncHandler(async (req, res) => {
 
 const getAllColleges = asyncHandler(async (req, res) => {
   let { filter = "all" } = req.query;
-  const { page, limit } = getPagination(req.query);
+  const { page, limit, skip } = getPagination(req.query);
 
   const company = await prisma.company.findUnique({
     where: { email: req.user.email },
@@ -773,7 +773,7 @@ const getAllColleges = asyncHandler(async (req, res) => {
           totalColleges,
           totalPages: Math.ceil(totalColleges / limit),
           hasPrevPage: page > 1,
-          hasNextPage: page * limit < totalColleges,
+          hasNextPage: skip+colleges.length < totalColleges,
         },
       },
       "colleges list"
@@ -818,7 +818,7 @@ const getAllJobs = asyncHandler(async (req, res) => {
   });
   if (!company) throw new ApiError(404, "no such company found");
 
-  const { page, limit } = getPagination(req.query);
+  const { page, limit, skip } = getPagination(req.query);
   let { filter = "current" } = req.query;
 
   const whereClause = {
@@ -872,7 +872,7 @@ const getAllJobs = asyncHandler(async (req, res) => {
           totalJobs,
           totalPages: Math.ceil(totalJobs / limit),
           hasPrevPage: page > 1,
-          hasNextPage: page * limit < totalJobs,
+          hasNextPage: skip+jobs.length < totalJobs,
         },
       },
       "all jobs"

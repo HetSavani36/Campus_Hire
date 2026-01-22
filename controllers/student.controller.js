@@ -403,7 +403,7 @@ const apply = asyncHandler(async (req, res) => {
 
 const getJobsList = asyncHandler(async (req, res) => {
   const { filter = "current" } = req.query;
-  const { page, limit } = getPagination(req.query);
+  const { page, limit, skip } = getPagination(req.query);
 
   const student = await prisma.student.findUnique({
     where: { userId: req.user.id },
@@ -544,7 +544,7 @@ const getJobsList = asyncHandler(async (req, res) => {
           totalJobs,
           totalPages: Math.ceil(totalJobs / limit),
           hasPrevPage: page > 1,
-          hasNextPage: page * limit < totalJobs,
+          hasNextPage: skip+jobs.length < totalJobs,
         },
       },
       "student jobs"
