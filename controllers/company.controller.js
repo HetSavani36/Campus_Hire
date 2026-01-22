@@ -9,6 +9,7 @@ import { emailOptions, emailQueue } from "../queues/email-queue.js";
 const prisma = new PrismaClient();
 import crypto from "crypto";
 import { canStudentApplicationTransition } from "../domain/studentApplicationStateMachine.js";
+import { redisConnection } from "../config/redis.js";
 
 function createJobHash(data) {
   return crypto
@@ -178,6 +179,7 @@ const collabWithCollege = asyncHandler(async (req, res) => {
       },
       emailOptions
     );
+    await redisConnection.incr(`college:${college.id}:collab:requests:version`);
   }
 
   res.json(

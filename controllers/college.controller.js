@@ -657,6 +657,21 @@ const getAllCollabRequests = asyncHandler(async (req, res) => {
   });
   if (!college) throw new ApiError(404, "no such college found");
 
+    const version =
+      (await redisConnection.get(`college:${college.id}:collab:requests:version`)) || 1;
+
+    const cacheKey = `college:${college.id}:collab:requests:v${version}:status:${status}:page:${page}:limit:${limit}`;
+    const cached = await redisConnection.get(cacheKey);
+    if (cached) {
+      return res.json(
+        new ApiResponse(
+          200,
+          JSON.parse(cached),
+          "collab requests(cached)",
+        ),
+      );
+    }
+
   let [collabRequests, totalRequests] = await prisma.$transaction([
     prisma.collab.findMany({
       where: {
@@ -689,20 +704,24 @@ const getAllCollabRequests = asyncHandler(async (req, res) => {
     status:status
   }))
 
+  const responsePayLoad={
+    collabRequests,
+    pagination: {
+      page,
+      limit,
+      totalRequests,
+      totalPages: Math.ceil(totalRequests / limit),
+      hasPrevPage: page > 1,
+      hasNextPage: skip+collabRequests.length < totalRequests,
+    },
+  }
+
+  await redisConnection.setex(cacheKey,60,JSON.stringify(responsePayLoad))
+
   res.json(
     new ApiResponse(
       200,
-      {
-        collabRequests,
-        pagination: {
-          page,
-          limit,
-          totalRequests,
-          totalPages: Math.ceil(totalRequests / limit),
-          hasPrevPage: page > 1,
-          hasNextPage: skip+collabRequests.length < totalRequests,
-        },
-      },
+      responsePayLoad,
       "collab requests"
     )
   );
