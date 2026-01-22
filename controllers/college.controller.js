@@ -430,7 +430,10 @@ const assignMentor = asyncHandler(async (req, res) => {
     );
   }
 
+  //mentors
   await redisConnection.incr(`college:${college.id}:mentors:version`);
+  //menotr details
+  await redisConnection.incr(`mentor:${mentor.id}:version`);
 
   res.json(new ApiResponse(200, {mentorAssigned:occured,mentor}, occured?"mentor assigned successfully":"mentor already assigned"));
 });
@@ -578,6 +581,20 @@ const mentorDetails = asyncHandler(async (req, res) => {
   });
   if (!college) throw new ApiError(404, "no such college found");
 
+  const version = (await redisConnection.get(`mentor:${mentorId}:version`)) || 1;
+
+  const cacheKey = `mentor:${mentorId}:v${version}:filter:${filter}`;
+  const cached = await redisConnection.get(cacheKey);
+  if (cached) {
+    return res.json(
+      new ApiResponse(
+        200,
+        JSON.parse(cached),
+        "mentor detail (cached)",
+      ),
+    );
+  }
+
   let whereClause = {
     collegeId: college.id,
     isApproved: true,
@@ -621,6 +638,8 @@ const mentorDetails = asyncHandler(async (req, res) => {
   };
   mentor.collegeId = undefined;
   mentor.user = undefined;
+
+  await redisConnection.setex(cacheKey,30,JSON.stringify(mentor))
 
   res.json(new ApiResponse(200, mentor, "mentor detail"));
 });
