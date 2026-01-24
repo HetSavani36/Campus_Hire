@@ -368,7 +368,7 @@ const postJob = asyncHandler(async (req, res) => {
           select: {
             id: true,
             title: true,
-            college: { select: { name: true, email: true } },
+            college: { select: {id:true, name: true, email: true } },
           },
         });
 
@@ -386,7 +386,7 @@ const postJob = asyncHandler(async (req, res) => {
             select: {
               id: true,
               title: true,
-              college: { select: { name: true, email: true } },
+              college: { select: {id:true, name: true, email: true } },
             },
           });
         } else {
@@ -422,6 +422,8 @@ const postJob = asyncHandler(async (req, res) => {
       },
       emailOptions
     );
+
+    await redisConnection.incr(`college:${entry.job.college.id}:job:requests:version`);
   }
 
   res.json(

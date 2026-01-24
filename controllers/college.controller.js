@@ -351,6 +351,7 @@ const jobApprovalDecision = asyncHandler(async (req, res) => {
 
   };
 
+  await redisConnection.incr(`college:${college.id}:job:requests:version`);
   await redisConnection.incr(`college:${college.id}:mentors:version`);
 
   res.json(
@@ -436,6 +437,8 @@ const assignMentor = asyncHandler(async (req, res) => {
   await redisConnection.incr(`college:${college.id}:mentors:version`);
   //menotr details
   await redisConnection.incr(`mentor:${mentor.id}:version`);
+
+  await redisConnection.incr(`college:${college.id}:job:requests:version`);
 
   res.json(new ApiResponse(200, {mentorAssigned:occured,mentor}, occured?"mentor assigned successfully":"mentor already assigned"));
 });
@@ -772,7 +775,7 @@ const getCompanyDetails = asyncHandler(async (req, res) => {
     collaboratedCount: company.collabs.length,
   };
 
-  await redisConnection.setex(cacheKey,120,JSON.parse(formattedCompany))
+  await redisConnection.setex(cacheKey,120,JSON.stringify(formattedCompany))
 
   res.json(new ApiResponse(200, formattedCompany, "company details"));
 });
@@ -786,6 +789,20 @@ const getAllJobRequests = asyncHandler(async (req, res) => {
     select: { id: true },
   });
   if (!college) throw new ApiError(404, "no such college found");
+
+  const version = (await redisConnection.get(`college:${college.id}:job:requests:version`)) || 1;
+
+  const cacheKey = `college:${college.id}:job:requests:v${version}:filter:${filter}:page:${page}:limit:${limit}`;
+  const cached = await redisConnection.get(cacheKey);
+  if (cached) {
+    return res.json(
+      new ApiResponse(
+        200,
+        JSON.parse(cached),
+        "job requests(cached)",
+      ),
+    );
+  }
 
   const startOfToday = new Date();
   startOfToday.setHours(0, 0, 0, 0);
@@ -863,21 +880,35 @@ const getAllJobRequests = asyncHandler(async (req, res) => {
     status:filter
   }));
 
+  const responsePayLoad = {
+    jobRequests,
+    pagination: {
+      page,
+      limit,
+      totalRequests,
+      totalPages: Math.ceil(totalRequests / limit),
+      hasPrevPage: page > 1,
+      hasNextPage: skip + jobRequests.length < totalRequests,
+    },
+  };
+
+  const ttlMap = {
+    PENDING: 30,
+    CURRENT: 60,
+    ASSIGN_MENTOR: 30,
+    PAST: 300,
+  };
+
+  await redisConnection.setex(
+    cacheKey,
+    ttlMap[filter] ?? 60,
+    JSON.stringify(responsePayLoad),
+  );
 
   res.json(
     new ApiResponse(
       200,
-      {
-        jobRequests,
-        pagination: {
-          page,
-          limit,
-          totalRequests,
-          totalPages: Math.ceil(totalRequests / limit),
-          hasPrevPage: page > 1,
-          hasNextPage: skip+jobRequests.length < totalRequests,
-        },
-      },
+      responsePayLoad,
       "job requests"
     )
   );
