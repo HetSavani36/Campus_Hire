@@ -157,6 +157,8 @@ const collabDecision = asyncHandler(async (req, res) => {
       },
       emailOptions
     );
+
+    await redisConnection.incr(`college:${college.id}:collab:requests:version`);
   }
 
   res.json(
@@ -657,8 +659,7 @@ const getAllCollabRequests = asyncHandler(async (req, res) => {
   });
   if (!college) throw new ApiError(404, "no such college found");
 
-    const version =
-      (await redisConnection.get(`college:${college.id}:collab:requests:version`)) || 1;
+    const version = (await redisConnection.get(`college:${college.id}:collab:requests:version`)) || 1;
 
     const cacheKey = `college:${college.id}:collab:requests:v${version}:status:${status}:page:${page}:limit:${limit}`;
     const cached = await redisConnection.get(cacheKey);
