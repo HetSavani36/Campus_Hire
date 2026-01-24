@@ -439,6 +439,7 @@ const assignMentor = asyncHandler(async (req, res) => {
   await redisConnection.incr(`mentor:${mentor.id}:version`);
 
   await redisConnection.incr(`college:${college.id}:job:requests:version`);
+  await redisConnection.incr(`job:${job.id}:version`);
 
   res.json(new ApiResponse(200, {mentorAssigned:occured,mentor}, occured?"mentor assigned successfully":"mentor already assigned"));
 });
@@ -925,6 +926,20 @@ const getJobDetails = asyncHandler(async (req, res) => {
   });
   if (!college) throw new ApiError(404, "no such college found");
 
+  const version = (await redisConnection.get(`job:${jobId}:version`)) || 1;
+
+  const cacheKey = `job:${jobId}}:v${version}`;
+  const cached = await redisConnection.get(cacheKey);
+  if (cached) {
+    return res.json(
+      new ApiResponse(
+        200,
+        JSON.parse(cached),
+        "job requests(cached)",
+      ),
+    );
+  }
+
   const job = await prisma.job.findUnique({
     where: { id: jobId },
     select: {
@@ -997,6 +1012,8 @@ const getJobDetails = asyncHandler(async (req, res) => {
       return arr;
     }, []),
   };
+
+  await redisConnection.setex(cacheKey,120,JSON.stringify(formattedJob))
 
   res.json(new ApiResponse(200, formattedJob, "job detail"));
 });
