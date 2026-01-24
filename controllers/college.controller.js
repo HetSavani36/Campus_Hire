@@ -157,7 +157,7 @@ const collabDecision = asyncHandler(async (req, res) => {
       },
       emailOptions
     );
-
+    await redisConnection.incr(`company:${companyId}:version`);
     await redisConnection.incr(`college:${college.id}:collab:requests:version`);
   }
 
@@ -731,6 +731,20 @@ const getAllCollabRequests = asyncHandler(async (req, res) => {
 const getCompanyDetails = asyncHandler(async (req, res) => {
   const { companyId } = req.params;
   if (!companyId) throw new ApiError(403, "please provide company id");
+  
+  const version = (await redisConnection.get(`company:${companyId}:version`)) || 1;
+
+  const cacheKey = `company:${companyId}:v${version}`;
+  const cached = await redisConnection.get(cacheKey);
+  if (cached) {
+    return res.json(
+      new ApiResponse(
+        200,
+        JSON.parse(cached),
+        "company details(cached)",
+      ),
+    );
+  }
 
   const company = await prisma.company.findUnique({
     where: { id: companyId },
@@ -748,6 +762,7 @@ const getCompanyDetails = asyncHandler(async (req, res) => {
   });
   if (!company) throw new ApiError(403, "no such company found");
 
+
   const formattedCompany = {
     id: company.id,
     name: company.name,
@@ -756,6 +771,8 @@ const getCompanyDetails = asyncHandler(async (req, res) => {
     contactNo: company.contactNo,
     collaboratedCount: company.collabs.length,
   };
+
+  await redisConnection.setex(cacheKey,120,JSON.parse(formattedCompany))
 
   res.json(new ApiResponse(200, formattedCompany, "company details"));
 });
