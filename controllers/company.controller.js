@@ -274,6 +274,8 @@ const addSkill = asyncHandler(async (req, res) => {
     occured=true
   })
 
+  await redisConnection.incr(`company:skills:version`)
+
   res.json(new ApiResponse(201, skill, occured?"new skill added":"skill already exists"));
 });
 
@@ -939,6 +941,15 @@ const getAllJobs = asyncHandler(async (req, res) => {
 
 const getAllSkills = asyncHandler(async (req, res) => {
   const { search, sortBy = "name", sortOrder = "desc" } = req.query;
+  const version = (await redisConnection.get(`company:skills:version`)) || 1;
+
+  const cacheKey = `company:skills:v${version}:filter:${search}:sortBy:${sortBy}:sortOrder:${sortOrder}`;
+  const cached = await redisConnection.get(cacheKey);
+  if (cached) {
+    return res.json(
+      new ApiResponse(200, JSON.parse(cached), "all skills(cached)"),
+    );
+  }
   const skills = await prisma.skill.findMany({
     where: {
       name: { contains: search, mode: "insensitive" },
@@ -947,6 +958,8 @@ const getAllSkills = asyncHandler(async (req, res) => {
       [sortBy]: sortOrder,
     },
   });
+
+  await redisConnection.setex(cacheKey,60,JSON.stringify(skills))
 
   res.json(new ApiResponse(200, skills, "all skills"));
 });
