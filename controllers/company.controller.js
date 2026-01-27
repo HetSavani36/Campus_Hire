@@ -429,7 +429,7 @@ const postJob = asyncHandler(async (req, res) => {
     );
     await redisConnection.incr(`college:${entry.job.college.id}:job:requests:version`);
   }
-  
+
   await redisConnection.incr(`company:${company.id}:jobs:version`);
 
   res.json(
@@ -466,6 +466,7 @@ const makeStudentApplicationDecision = asyncHandler(async (req, res) => {
         },
         job: {
           select: {
+            id:true,
             title: true,
             company: {
               select: {
@@ -513,6 +514,8 @@ const makeStudentApplicationDecision = asyncHandler(async (req, res) => {
       },
       emailOptions
     );
+
+    await redisConnection.incr(`company:job:${application.job.id}:version`);
   }
 
   res.json(
@@ -989,6 +992,16 @@ const getJobDetails = asyncHandler(async (req, res) => {
   });
   if (!company) throw new ApiError(404, "no such company found");
 
+  const version = (await redisConnection.get(`company:job:${jobId}:version`)) || 1;
+
+  const cacheKey = `company:job:${jobId}:v${version}`;
+  const cached = await redisConnection.get(cacheKey);
+  if (cached) {
+    return res.json(
+      new ApiResponse(200, JSON.parse(cached), "job details(cached)"),
+    );
+  }
+
   const job = await prisma.job.findUnique({
     where: { id: jobId },
     select: {
@@ -1068,6 +1081,8 @@ const getJobDetails = asyncHandler(async (req, res) => {
     applicationCount.rejected +
     applicationCount.hired +
     applicationCount.pending;
+
+  await redisConnection.setex(cacheKey,60,JSON.stringify({...job,applicationCount}))
 
   res.json(new ApiResponse(200, { ...job, applicationCount }, "job details"));
 });

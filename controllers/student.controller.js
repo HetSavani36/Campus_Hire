@@ -6,6 +6,7 @@ import { generatePassword, hashPassword } from "../utils/password.util.js";
 import { parseFileBuffer } from "../utils/csv_parsing.util.js";
 import { emailOptions, emailQueue } from "../queues/email-queue.js";
 import csv from "csv-parser";
+import { redisConnection } from "../config/redis.js";
 
 const prisma = new PrismaClient();
 
@@ -327,6 +328,7 @@ const apply = asyncHandler(async (req, res) => {
       appliedAt: true,
       job: {
         select: {
+          id:true,
           title:true,
           company: {
             select: {
@@ -396,6 +398,8 @@ const apply = asyncHandler(async (req, res) => {
       },
       emailOptions
     );
+    await redisConnection.incr(`company:job:${responseSnapshot.job.id}:version`)
+    await redisConnection.incr(`job:${responseSnapshot.job.id}:version`)
   }
 
   res.json(new ApiResponse(201, responseSnapshot, "your have applied to this job"));

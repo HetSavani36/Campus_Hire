@@ -4,6 +4,7 @@ import ApiResponse from "../utils/ApiResponse.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { emailOptions, emailQueue } from "../queues/email-queue.js";
 import { canJobTransition } from "../domain/jobStateMachine.js";
+import { redisConnection } from "../config/redis.js";
 const prisma=new PrismaClient()
 
 const makeStudentApplicationDecision = asyncHandler(async (req, res) => {
@@ -42,6 +43,7 @@ const makeStudentApplicationDecision = asyncHandler(async (req, res) => {
         },
         job:{
           select:{
+            id:true,
             title:true,
             company:{
               select:{
@@ -93,6 +95,8 @@ const makeStudentApplicationDecision = asyncHandler(async (req, res) => {
         },
         emailOptions
       );
+
+      await redisConnection.incr(`company:job:${applicationSnapshot.job.id}:version`)
     }
 
     res.json(

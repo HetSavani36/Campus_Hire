@@ -351,6 +351,7 @@ const jobApprovalDecision = asyncHandler(async (req, res) => {
         );
       }
     }
+    await redisConnection.incr(`company:job:${jobId}:version`);
     await redisConnection.incr(`company:${jobSnapshot.company.id}:jobs:version`);
     await redisConnection.incr(`college:${college.id}:job:requests:version`);
     await redisConnection.incr(`college:${college.id}:mentors:version`);
@@ -434,15 +435,17 @@ const assignMentor = asyncHandler(async (req, res) => {
       },
       emailOptions
     );
+
+    await redisConnection.incr(`company:job:${jobId}:version`);
+    //mentors
+    await redisConnection.incr(`college:${college.id}:mentors:version`);
+    //menotr details
+    await redisConnection.incr(`mentor:${mentor.id}:version`);
+  
+    await redisConnection.incr(`college:${college.id}:job:requests:version`);
+    await redisConnection.incr(`job:${job.id}:version`);
   }
 
-  //mentors
-  await redisConnection.incr(`college:${college.id}:mentors:version`);
-  //menotr details
-  await redisConnection.incr(`mentor:${mentor.id}:version`);
-
-  await redisConnection.incr(`college:${college.id}:job:requests:version`);
-  await redisConnection.incr(`job:${job.id}:version`);
 
   res.json(new ApiResponse(200, {mentorAssigned:occured,mentor}, occured?"mentor assigned successfully":"mentor already assigned"));
 });
