@@ -427,9 +427,10 @@ const postJob = asyncHandler(async (req, res) => {
       },
       emailOptions
     );
-
     await redisConnection.incr(`college:${entry.job.college.id}:job:requests:version`);
   }
+  
+  await redisConnection.incr(`company:${company.id}:jobs:version`);
 
   res.json(
     new ApiResponse(200, createdJobs, "job posting processed successfully")
@@ -880,6 +881,16 @@ const getAllJobs = asyncHandler(async (req, res) => {
   const { page, limit, skip } = getPagination(req.query);
   let { filter = "current" } = req.query;
 
+  const version = (await redisConnection.get(`company:${company.id}:jobs:version`)) || 1;
+
+  const cacheKey = `company:${company.id}:jobs:v${version}:filter:${filter}:page:${page}:limit:${limit}`;
+  const cached = await redisConnection.get(cacheKey);
+  if (cached) {
+    return res.json(
+      new ApiResponse(200, JSON.parse(cached), "company jobs(cached)"),
+    );
+  }
+
   const whereClause = {
     companyId: company.id,
   };
@@ -920,20 +931,24 @@ const getAllJobs = asyncHandler(async (req, res) => {
     status:filter
   }))
 
+  const responsePayLoad = {
+    jobs,
+    pagination: {
+      page,
+      limit,
+      totalJobs,
+      totalPages: Math.ceil(totalJobs / limit),
+      hasPrevPage: page > 1,
+      hasNextPage: skip + jobs.length < totalJobs,
+    },
+  };
+
+  await redisConnection.setex(cacheKey,60,JSON.stringify(responsePayLoad))
+
   res.json(
     new ApiResponse(
       200,
-      {
-        jobs,
-        pagination: {
-          page,
-          limit,
-          totalJobs,
-          totalPages: Math.ceil(totalJobs / limit),
-          hasPrevPage: page > 1,
-          hasNextPage: skip+jobs.length < totalJobs,
-        },
-      },
+      responsePayLoad,
       "all jobs"
     )
   );

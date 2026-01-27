@@ -262,6 +262,7 @@ const jobApprovalDecision = asyncHandler(async (req, res) => {
         collegeId:true,
         company:{
           select:{
+            id:true,
             name:true,
             email:true
           }
@@ -350,11 +351,11 @@ const jobApprovalDecision = asyncHandler(async (req, res) => {
         );
       }
     }
-
+    await redisConnection.incr(`company:${jobSnapshot.company.id}:jobs:version`);
+    await redisConnection.incr(`college:${college.id}:job:requests:version`);
+    await redisConnection.incr(`college:${college.id}:mentors:version`);
   };
 
-  await redisConnection.incr(`college:${college.id}:job:requests:version`);
-  await redisConnection.incr(`college:${college.id}:mentors:version`);
 
   res.json(
     new ApiResponse(
