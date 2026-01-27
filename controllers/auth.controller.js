@@ -11,6 +11,7 @@ import {
 } from "../utils/jwt.util.js";
 import { emailOptions, emailQueue } from "../queues/email-queue.js";
 import crypto from "crypto"
+import { redisConnection } from "../config/redis.js";
 
 const prisma = new PrismaClient();
 
@@ -61,6 +62,8 @@ const registerCollege = asyncHandler(async (req, res) => {
     },
     emailOptions
   );
+
+  await redisConnection.incr('colleges:version')
   
   res.json(
     new ApiResponse(

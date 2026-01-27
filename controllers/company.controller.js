@@ -182,6 +182,7 @@ const collabWithCollege = asyncHandler(async (req, res) => {
       emailOptions
     );
     await redisConnection.incr(`college:${college.id}:collab:requests:version`);
+    await redisConnection.incr(`colleges:version`);
   }
 
   res.json(
@@ -676,6 +677,16 @@ const getAllColleges = asyncHandler(async (req, res) => {
   });
   if (!company) throw new ApiError(404, "no such company found");
 
+  const version = (await redisConnection.get(`colleges:version`)) || 1;
+
+  const cacheKey = `colleges:v${version}:filter:${filter}:page:${page}:limit:${limit}`;
+  const cached = await redisConnection.get(cacheKey);
+  if (cached) {
+    return res.json(
+      new ApiResponse(200, JSON.parse(cached), "all colleges(cached)"),
+    );
+  }
+
   const collegeSelect = {
     id: true,
     name: true,
@@ -792,20 +803,24 @@ const getAllColleges = asyncHandler(async (req, res) => {
     throw new ApiError(400, "invalid filter");
   }
 
+  const responsePayLoad = {
+    colleges,
+    pagination: {
+      page,
+      limit,
+      totalColleges,
+      totalPages: Math.ceil(totalColleges / limit),
+      hasPrevPage: page > 1,
+      hasNextPage: skip + colleges.length < totalColleges,
+    },
+  };
+
+  await redisConnection.incr(cacheKey,60,JSON.stringify(responsePayLoad))
+
   res.json(
     new ApiResponse(
       200,
-      {
-        colleges,
-        pagination: {
-          page,
-          limit,
-          totalColleges,
-          totalPages: Math.ceil(totalColleges / limit),
-          hasPrevPage: page > 1,
-          hasNextPage: skip+colleges.length < totalColleges,
-        },
-      },
+      responsePayLoad,
       "colleges list"
     )
   );

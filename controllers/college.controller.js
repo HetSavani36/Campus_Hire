@@ -158,6 +158,7 @@ const collabDecision = asyncHandler(async (req, res) => {
       emailOptions
     );
     await redisConnection.incr(`company:${companyId}:version`);
+    await redisConnection.incr(`colleges:version`);
     await redisConnection.incr(`college:${college.id}:collab:requests:version`);
   }
 
