@@ -105,6 +105,8 @@ const createEmployee = asyncHandler(async (req, res) => {
     },
     emailOptions
   );
+
+  await redisConnection.incr(`company:${company.id}:employees:version`);
   
   res.json(
     new ApiResponse( 201, employee, "employee created successfully" ) 
@@ -528,6 +530,16 @@ const getEmployeesList = asyncHandler(async (req, res) => {
   });
   if (!company) throw new ApiError(404, "no such company found");
 
+  const version = (await redisConnection.get(`company:${company.id}:employees:version`)) || 1;
+
+  const cacheKey = `company:${company.id}:employees:v${version}:filter:${search}:page:${page}:limit:${limit}`;
+  const cached = await redisConnection.get(cacheKey);
+  if (cached) {
+    return res.json(
+      new ApiResponse(200, JSON.parse(cached), "employees list(cached)"),
+    );
+  }
+
   const whereClause = {
     companyId: company.id,
     ...(search && {
@@ -566,21 +578,24 @@ const getEmployeesList = asyncHandler(async (req, res) => {
 
   ])
 
+  const responsePayLoad={
+    employees,
+    pagination: {
+      page,
+      limit,
+      totalEmployees,
+      totalPages: Math.ceil(totalEmployees / limit),
+      hasPrevPage: page > 1,
+      hasNextPage: skip+employees.length < totalEmployees,
+    },
+  }
+
+  await redisConnection.setex(cacheKey,60,JSON.stringify(responsePayLoad))
 
   res.json(
     new ApiResponse(
       200,
-      {
-        employees,
-        pagination: {
-          page,
-          limit,
-          totalEmployees,
-          totalPages: Math.ceil(totalEmployees / limit),
-          hasPrevPage: page > 1,
-          hasNextPage: skip+employees.length < totalEmployees,
-        },
-      },
+      responsePayLoad,
       "employees list"
     )
   );
