@@ -610,6 +610,16 @@ const getEmployeeDetail = asyncHandler(async (req, res) => {
   });
   if (!company) throw new ApiError(404, "no such company found");
 
+  const version = (await redisConnection.get(`employee:${employeeId}:version`)) || 1;
+
+  const cacheKey = `employee:${employeeId}}:v${version}`;
+  const cached = await redisConnection.get(cacheKey);
+  if (cached) {
+    return res.json(
+      new ApiResponse(200, JSON.parse(cached), "employee details(cached)"),
+    );
+  }
+
   const employee = await prisma.employee.findUnique({
     where: { id: employeeId },
     select: {
@@ -649,8 +659,9 @@ const getEmployeeDetail = asyncHandler(async (req, res) => {
     },
   });
   if (!employee) throw new ApiError(404, "no such employee found");
-  if (employee.companyId !== company.id)
-    throw new ApiError(403, "you cant see employee of another company");
+  if (employee.companyId !== company.id) throw new ApiError(403, "you cant see employee of another company");
+
+  await redisConnection.setex(cacheKey,120,JSON.stringify(employee))
 
   res.json(new ApiResponse(200, employee, "employee details"));
 });
