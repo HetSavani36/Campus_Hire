@@ -418,6 +418,16 @@ const getJobsList = asyncHandler(async (req, res) => {
   });
   if (!student) throw new ApiError(404, "no such student found");
 
+  const version = (await redisConnection.get(`college:${student.collegeId}:jobs:version`)) || 1;
+
+  const cacheKey = `college:${student.collegeId}:jobs:v${version}:filter:${filter}:page:${page}:limit:${limit}`;
+  const cached = await redisConnection.get(cacheKey);
+  if (cached) {
+    return res.json(
+      new ApiResponse(200, JSON.parse(cached), "jobs list(cached)"),
+    );
+  }
+
   const now = new Date();
 
   const jobSelect = {
@@ -537,20 +547,24 @@ const getJobsList = asyncHandler(async (req, res) => {
     throw new ApiError(400, "invalid filter");
   }
 
+  const responsePayLoad = {
+    jobs,
+    pagination: {
+      page,
+      limit,
+      totalJobs,
+      totalPages: Math.ceil(totalJobs / limit),
+      hasPrevPage: page > 1,
+      hasNextPage: skip + jobs.length < totalJobs,
+    },
+  };
+
+  await redisConnection.setex(cacheKey,60,JSON.stringify(responsePayLoad))
+
   res.json(
     new ApiResponse(
       200,
-      {
-        jobs,
-        pagination: {
-          page,
-          limit,
-          totalJobs,
-          totalPages: Math.ceil(totalJobs / limit),
-          hasPrevPage: page > 1,
-          hasNextPage: skip+jobs.length < totalJobs,
-        },
-      },
+      responsePayLoad,
       "student jobs"
     )
   );
@@ -566,6 +580,16 @@ const getJobDetail = asyncHandler(async (req, res) => {
     select:{collegeId:true}
   });
   if (!student) throw new ApiError(404, "no such student found");
+
+  const version = (await redisConnection.get(`company:job:${jobId}:version`)) || 1;
+
+  const cacheKey = `company:job:${jobId}}:v${version}`;
+  const cached = await redisConnection.get(cacheKey);
+  if (cached) {
+    return res.json(
+      new ApiResponse(200, JSON.parse(cached), "job requests(cached)"),
+    );
+  }
 
   const job = await prisma.job.findUnique({
     where: { id: jobId },
@@ -614,6 +638,8 @@ const getJobDetail = asyncHandler(async (req, res) => {
     name: job.mentor.user.name,
     email: job.mentor.user.email,
   };
+
+  await redisConnection.setex(cacheKey,60,JSON.stringify(job))
 
   res.json(new ApiResponse(200, job, "job details"));
 });

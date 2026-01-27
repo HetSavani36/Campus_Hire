@@ -355,6 +355,7 @@ const jobApprovalDecision = asyncHandler(async (req, res) => {
     await redisConnection.incr(`company:${jobSnapshot.company.id}:jobs:version`);
     await redisConnection.incr(`college:${college.id}:job:requests:version`);
     await redisConnection.incr(`college:${college.id}:mentors:version`);
+    await redisConnection.incr(`college:${college.id}:jobs:version`);
   };
 
 
@@ -444,6 +445,7 @@ const assignMentor = asyncHandler(async (req, res) => {
   
     await redisConnection.incr(`college:${college.id}:job:requests:version`);
     await redisConnection.incr(`job:${job.id}:version`);
+    await redisConnection.incr(`college:${college.id}:jobs:version`);
   }
 
 

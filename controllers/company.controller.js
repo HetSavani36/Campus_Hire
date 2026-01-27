@@ -428,6 +428,7 @@ const postJob = asyncHandler(async (req, res) => {
       emailOptions
     );
     await redisConnection.incr(`college:${entry.job.college.id}:job:requests:version`);
+    await redisConnection.incr(`college:${entry.job.college.id}:jobs:version`);
   }
 
   await redisConnection.incr(`company:${company.id}:jobs:version`);
@@ -514,7 +515,7 @@ const makeStudentApplicationDecision = asyncHandler(async (req, res) => {
       },
       emailOptions
     );
-
+    
     await redisConnection.incr(`company:job:${application.job.id}:version`);
   }
 
