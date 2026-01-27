@@ -160,6 +160,7 @@ const collabDecision = asyncHandler(async (req, res) => {
     await redisConnection.incr(`company:${companyId}:version`);
     await redisConnection.incr(`colleges:version`);
     await redisConnection.incr(`college:${college.id}:collab:requests:version`);
+    await redisConnection.incr(`college:${college.id}:version`)
   }
 
   res.json(

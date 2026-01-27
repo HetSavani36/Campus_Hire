@@ -830,6 +830,16 @@ const getAllColleges = asyncHandler(async (req, res) => {
 const getCollegeDetails = async (req, res) => {
   const { collegeId } = req.params;
 
+  const version = (await redisConnection.get(`college:${collegeId}:version`)) || 1;
+
+  const cacheKey = `college:${collegeId}}:v${version}`;
+  const cached = await redisConnection.get(cacheKey);
+  if (cached) {
+    return res.json(
+      new ApiResponse(200, JSON.parse(cached), "college details(cached)"),
+    );
+  }
+
   let college = await prisma.college.findUnique({
     where: { id: collegeId },
     select: {
@@ -852,6 +862,8 @@ const getCollegeDetails = async (req, res) => {
     collaboratedCount: college.collabs.length,
   };
   college.collabs = undefined;
+
+  await redisConnection.setex(cacheKey,60,JSON.stringify(college))
 
   res.json(new ApiResponse(200, college, "college details"));
 };
