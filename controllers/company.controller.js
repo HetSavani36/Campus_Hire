@@ -1180,46 +1180,210 @@ const getAllColleges = asyncHandler(async (req, res) => {
 });
 
 
-const getCollegeDetails = async (req, res) => {
-  const { collegeId } = req.params;
+const getAllColleges = asyncHandler(async (req, res) => {
+  log.info("request.start", {
+    action: "getAllColleges",
+    actorId: req.user.id,
+    role: req.user.role,
+    ip: req.ip,
+  });
 
-  const version = (await redisConnection.get(`college:${collegeId}:version`)) || 1;
+  let { filter = "all" } = req.query;
+  const { page, limit, skip } = getPagination(req.query);
 
-  const cacheKey = `college:${collegeId}}:v${version}`;
+  const company = await prisma.company.findUnique({
+    where: { email: req.user.email },
+    select: { id: true },
+  });
+  if (!company) throw new ApiError(404, "no such company found");
+
+  log.info("getColleges.company.resolved", {
+    companyId: company.id,
+  });
+
+  const version = (await redisConnection.get(`colleges:version`)) || 1;
+
+  const cacheKey = `colleges:v${version}:filter:${filter}:page:${page}:limit:${limit}`;
   const cached = await redisConnection.get(cacheKey);
+
   if (cached) {
+    log.info("getColleges.cache.hit", {
+      filter,
+      page,
+      limit,
+    });
+
     return res.json(
-      new ApiResponse(200, JSON.parse(cached), "college details(cached)"),
+      new ApiResponse(200, JSON.parse(cached), "all colleges(cached)"),
     );
   }
 
-  let college = await prisma.college.findUnique({
-    where: { id: collegeId },
-    select: {
-      id: true,
-      name: true,
-      address: true,
-      email: true,
-      phone: true,
+  log.info("getColleges.cache.miss", {
+    filter,
+    page,
+    limit,
+  });
+
+  const collegeSelect = {
+    id: true,
+    name: true,
+    address: true,
+    email: true,
+  };
+
+  let colleges = [];
+  let totalColleges = 0;
+
+  /* --------------------------------------------------
+     FILTER: ALL
+  -------------------------------------------------- */
+  if (filter === "all") {
+    log.info("getColleges.filter.all");
+
+    const [rows, count] = await prisma.$transaction([
+      prisma.college.findMany({
+        skip,
+        take: limit,
+        orderBy: { name: "asc" },
+        select: {
+          ...collegeSelect,
+          collabs: {
+            where: { companyId: company.id },
+            select: { status: true },
+          },
+        },
+      }),
+      prisma.college.count(),
+    ]);
+
+    colleges = rows.map((c) => ({
+      id: c.id,
+      name: c.name,
+      address: c.address,
+      email: c.email,
+      status:
+        c.collabs.length === 0
+          ? "not applied"
+          : c.collabs[0].status === "accepted"
+            ? "collaborated"
+            : c.collabs[0].status,
+    }));
+
+    totalColleges = count;
+  } else if (["pending", "rejected", "collaborated"].includes(filter)) {
+    /* --------------------------------------------------
+       FILTER: pending / rejected / collaborated
+    -------------------------------------------------- */
+    log.info("getColleges.filter.collab", {
+      filter,
+    });
+
+    const statusMap = {
+      pending: "pending",
+      rejected: "rejected",
+      collaborated: "accepted",
+    };
+
+    const whereClause = {
+      companyId: company.id,
+      status: statusMap[filter],
+    };
+
+    const [rows, count] = await prisma.$transaction([
+      prisma.collab.findMany({
+        where: whereClause,
+        skip,
+        take: limit,
+        orderBy: { college: { name: "asc" } },
+        select: {
+          status: true,
+          college: { select: collegeSelect },
+        },
+      }),
+      prisma.collab.count({ where: whereClause }),
+    ]);
+
+    colleges = rows.map((r) => ({
+      ...r.college,
+      status: filter === "collaborated" ? "collaborated" : r.status,
+    }));
+
+    totalColleges = count;
+  } else if (filter === "not_applied") {
+    /* --------------------------------------------------
+       FILTER: not_applied
+    -------------------------------------------------- */
+    log.info("getColleges.filter.not_applied");
+
+    const whereClause = {
       collabs: {
-        where: {
-          status: "accepted",
+        none: {
+          companyId: company.id,
         },
       },
-    },
+    };
+
+    const [rows, count] = await prisma.$transaction([
+      prisma.college.findMany({
+        where: whereClause,
+        skip,
+        take: limit,
+        orderBy: { name: "asc" },
+        select: collegeSelect,
+      }),
+      prisma.college.count({ where: whereClause }),
+    ]);
+
+    colleges = rows.map((c) => ({
+      ...c,
+      status: "not applied",
+    }));
+
+    totalColleges = count;
+  } else {
+    log.warn("getColleges.filter.invalid", {
+      filter,
+    });
+
+    throw new ApiError(400, "invalid filter");
+  }
+
+  log.info("getColleges.query.executed", {
+    filter,
+    returnedCount: colleges.length,
+    totalColleges,
   });
-  if (!college) throw new ApiError(404, "no such college found");
 
-  college = {
-    ...college,
-    collaboratedCount: college.collabs.length,
+  const responsePayLoad = {
+    colleges,
+    pagination: {
+      page,
+      limit,
+      totalColleges,
+      totalPages: Math.ceil(totalColleges / limit),
+      hasPrevPage: page > 1,
+      hasNextPage: skip + colleges.length < totalColleges,
+    },
   };
-  college.collabs = undefined;
 
-  await redisConnection.setex(cacheKey,60,JSON.stringify(college))
+  await redisConnection.setex(cacheKey, 60, JSON.stringify(responsePayLoad));
 
-  res.json(new ApiResponse(200, college, "college details"));
-};
+  log.info("getColleges.cache.set", {
+    filter,
+    page,
+    limit,
+    ttl: 60,
+  });
+
+  log.info("request.success", {
+    action: "getAllColleges",
+    filter,
+    returnedCount: colleges.length,
+  });
+
+  res.json(new ApiResponse(200, responsePayLoad, "colleges list"));
+});
+
 
 const getAllJobs = asyncHandler(async (req, res) => {
   const company = await prisma.company.findUnique({
