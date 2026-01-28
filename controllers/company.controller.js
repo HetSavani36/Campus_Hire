@@ -1303,26 +1303,52 @@ const getCollegeDetails = async (req, res) => {
 };
 
 
-
 const getAllJobs = asyncHandler(async (req, res) => {
+  log.info("request.start", {
+    action: "getAllJobs",
+    actorId: req.user.id,
+    role: req.user.role,
+    ip: req.ip,
+  });
+
   const company = await prisma.company.findUnique({
     where: { email: req.user.email },
-    select:{id:true}
+    select: { id: true },
   });
   if (!company) throw new ApiError(404, "no such company found");
+
+  log.info("getJobs.company.resolved", {
+    companyId: company.id,
+  });
 
   const { page, limit, skip } = getPagination(req.query);
   let { filter = "current" } = req.query;
 
-  const version = (await redisConnection.get(`company:${company.id}:jobs:version`)) || 1;
+  const version =
+    (await redisConnection.get(`company:${company.id}:jobs:version`)) || 1;
 
   const cacheKey = `company:${company.id}:jobs:v${version}:filter:${filter}:page:${page}:limit:${limit}`;
   const cached = await redisConnection.get(cacheKey);
+
   if (cached) {
+    log.info("getJobs.cache.hit", {
+      companyId: company.id,
+      filter,
+      page,
+      limit,
+    });
+
     return res.json(
       new ApiResponse(200, JSON.parse(cached), "company jobs(cached)"),
     );
   }
+
+  log.info("getJobs.cache.miss", {
+    companyId: company.id,
+    filter,
+    page,
+    limit,
+  });
 
   const whereClause = {
     companyId: company.id,
@@ -1335,12 +1361,12 @@ const getAllJobs = asyncHandler(async (req, res) => {
   if (filter === "accepted") whereClause.isApproved = true;
   if (filter === "pending") whereClause.isApproved = false;
 
-  let [jobs,totalJobs]=await prisma.$transaction([
+  let [jobs, totalJobs] = await prisma.$transaction([
     prisma.job.findMany({
       where: whereClause,
-      skip:skip,
-      take:limit,
-      orderBy:{createdAt:"desc"},
+      skip: skip,
+      take: limit,
+      orderBy: { createdAt: "desc" },
       select: {
         id: true,
         title: true,
@@ -1357,12 +1383,20 @@ const getAllJobs = asyncHandler(async (req, res) => {
       },
     }),
 
-    prisma.job.count({where:whereClause})
-  ])
-  jobs=jobs.map((job)=>({
+    prisma.job.count({ where: whereClause }),
+  ]);
+
+  jobs = jobs.map((job) => ({
     ...job,
-    status:filter
-  }))
+    status: filter,
+  }));
+
+  log.info("getJobs.query.executed", {
+    companyId: company.id,
+    filter,
+    returnedCount: jobs.length,
+    totalJobs,
+  });
 
   const responsePayLoad = {
     jobs,
@@ -1376,16 +1410,26 @@ const getAllJobs = asyncHandler(async (req, res) => {
     },
   };
 
-  await redisConnection.setex(cacheKey,60,JSON.stringify(responsePayLoad))
+  await redisConnection.setex(cacheKey, 60, JSON.stringify(responsePayLoad));
 
-  res.json(
-    new ApiResponse(
-      200,
-      responsePayLoad,
-      "all jobs"
-    )
-  );
+  log.info("getJobs.cache.set", {
+    companyId: company.id,
+    filter,
+    page,
+    limit,
+    ttl: 60,
+  });
+
+  log.info("request.success", {
+    action: "getAllJobs",
+    companyId: company.id,
+    filter,
+    returnedCount: jobs.length,
+  });
+
+  res.json(new ApiResponse(200, responsePayLoad, "all jobs"));
 });
+
 
 const getAllSkills = asyncHandler(async (req, res) => {
   const { search, sortBy = "name", sortOrder = "desc" } = req.query;
