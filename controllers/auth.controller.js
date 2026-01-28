@@ -408,46 +408,122 @@ const logout = asyncHandler(async (req, res) => {
   });
 });
 
-
 const refreshController = asyncHandler(async (req, res) => {
   const incomingRefreshToken = req.cookies?.refreshToken;
-  if (!incomingRefreshToken) throw new ApiError(401, "no refresh token provided");
 
-  const incomingRefreshTokenHash=crypto
+  log.info("refresh token request received", {
+    requestId: req.requestId,
+    ip: req.ip,
+    userAgent: req.headers["user-agent"],
+  });
+
+  if (!incomingRefreshToken) {
+    log.warn("refresh failed: no refresh token", {
+      requestId: req.requestId,
+      ip: req.ip,
+    });
+    throw new ApiError(401, "no refresh token provided");
+  }
+
+  const incomingRefreshTokenHash = crypto
     .createHash("sha256")
     .update(incomingRefreshToken)
-    .digest("hex")
+    .digest("hex");
 
-  const decoded = verifyRefreshToken(incomingRefreshToken);
-  if (decoded.type !== "refresh") throw new ApiError(403, "invalid token type");
+  let decoded;
+  try {
+    decoded = verifyRefreshToken(incomingRefreshToken);
+  } catch (err) {
+    log.warn("refresh failed: invalid refresh token signature", {
+      requestId: req.requestId,
+      ip: req.ip,
+    });
+    throw err;
+  }
 
-  const session=await prisma.session.findUnique({
-    where:{id:decoded.sessionId}
-  })
-  if(!session) throw new ApiError(404,"no such session found")
-  if (!session.refreshTokenHash) throw new ApiError(403, "session not initialized");
-  if (session.revokedAt) throw new ApiError(403, "session revoked");
-  if(session.expiresAt<new Date()) throw new ApiError(403,"session expires")
+  if (decoded.type !== "refresh") {
+    log.warn("refresh failed: invalid token type", {
+      requestId: req.requestId,
+      sessionId: decoded.sessionId,
+    });
+    throw new ApiError(403, "invalid token type");
+  }
+
+  const session = await prisma.session.findUnique({
+    where: { id: decoded.sessionId },
+  });
+
+  if (!session) {
+    log.warn("refresh failed: session not found", {
+      requestId: req.requestId,
+      sessionId: decoded.sessionId,
+    });
+    throw new ApiError(404, "no such session found");
+  }
+
+  if (!session.refreshTokenHash) {
+    log.error("refresh failed: session not initialized", {
+      requestId: req.requestId,
+      sessionId: session.id,
+    });
+    throw new ApiError(403, "session not initialized");
+  }
+
+  if (session.revokedAt) {
+    log.warn("refresh blocked: session revoked", {
+      requestId: req.requestId,
+      sessionId: session.id,
+      revokedAt: session.revokedAt,
+    });
+    throw new ApiError(403, "session revoked");
+  }
+
+  if (session.expiresAt < new Date()) {
+    log.warn("refresh blocked: session expired", {
+      requestId: req.requestId,
+      sessionId: session.id,
+      expiresAt: session.expiresAt,
+    });
+    throw new ApiError(403, "session expires");
+  }
+
   if (incomingRefreshTokenHash !== session.refreshTokenHash) {
     await prisma.session.update({
       where: { id: session.id },
       data: { revokedAt: new Date() },
     });
+
+    log.error("refresh token mismatch — session revoked", {
+      requestId: req.requestId,
+      sessionId: session.id,
+      ip: req.ip,
+    });
+
     throw new ApiError(401, "token mismatch");
   }
 
   const user = await prisma.user.findUnique({
     where: { id: decoded.id },
   });
-  if (!user) throw new ApiError(404, "user not found");
 
-  
-  const newRefreshToken = generateRefreshToken({ userId:user.id, sessionId:session.id });
-  const newHash=crypto
+  if (!user) {
+    log.error("refresh failed: user not found", {
+      requestId: req.requestId,
+      userId: decoded.id,
+    });
+    throw new ApiError(404, "user not found");
+  }
+
+  const newRefreshToken = generateRefreshToken({
+    userId: user.id,
+    sessionId: session.id,
+  });
+
+  const newHash = crypto
     .createHash("sha256")
     .update(newRefreshToken)
-    .digest("hex")
-    
+    .digest("hex");
+
   await prisma.session.update({
     where: { id: session.id },
     data: {
@@ -455,13 +531,26 @@ const refreshController = asyncHandler(async (req, res) => {
       expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
     },
   });
-  
+
+  log.info("refresh token rotated successfully", {
+    requestId: req.requestId,
+    userId: user.id,
+    sessionId: session.id,
+  });
+
   const accessToken = generateAccessToken(user);
+
   res
     .cookie("accessToken", accessToken, options)
     .cookie("refreshToken", newRefreshToken, options)
     .json(new ApiResponse(200, {}, "refreshed token successfully"));
+
+  log.info("refresh request completed", {
+    requestId: req.requestId,
+    userId: user.id,
+  });
 });
+
 
 const getMe = asyncHandler(async (req, res) => {
   const user = await prisma.user.findUnique({
