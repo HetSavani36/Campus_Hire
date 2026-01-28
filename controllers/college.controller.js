@@ -372,30 +372,57 @@ const assignMentor = asyncHandler(async (req, res) => {
   const { mentorId } = req.body;
   const { jobId } = req.params;
 
-  if (!mentorId || !jobId) throw new ApiError(403, "please provide all details");
+  if (!mentorId || !jobId) {
+    log.info("assignMentor validation failed", {
+      requestId: req.requestId,
+      userId: req.user.id,
+    });
+    throw new ApiError(403, "please provide all details");
+  }
+
+  log.info("assignMentor request received", {
+    requestId: req.requestId,
+    userId: req.user.id,
+    mentorId,
+    jobId,
+  });
 
   const college = await prisma.college.findUnique({
     where: { email: req.user.email },
     select: { id: true },
   });
-  if (!college) throw new ApiError(404, "no such college found");
+  if (!college) {
+    log.error("college not found during assignMentor", {
+      requestId: req.requestId,
+      userId: req.user.id,
+    });
+    throw new ApiError(404, "no such college found");
+  }
 
   const mentor = await prisma.mentor.findUnique({
     where: { id: mentorId },
     select: {
       id: true,
       collegeId: true,
-      user: {
-        select: {
-          name: true,
-          email: true,
-        },
-      },
+      user: { select: { name: true, email: true } },
     },
   });
-  if (!mentor) throw new ApiError(404, "no such mentor found");
+  if (!mentor) {
+    log.error("mentor not found", {
+      requestId: req.requestId,
+      mentorId,
+    });
+    throw new ApiError(404, "no such mentor found");
+  }
 
-  if (mentor.collegeId !== college.id) throw new ApiError(403, "this mentor does not belong to your college");
+  if (mentor.collegeId !== college.id) {
+    log.error("mentor belongs to another college", {
+      requestId: req.requestId,
+      mentorCollegeId: mentor.collegeId,
+      collegeId: college.id,
+    });
+    throw new ApiError(403, "mentor does not belong to your college");
+  }
 
   const job = await prisma.job.findUnique({
     where: { id: jobId },
@@ -406,26 +433,80 @@ const assignMentor = asyncHandler(async (req, res) => {
       status: true,
       isApproved: true,
       title: true,
-      company: {
-        select: { name: true },
-      },
+      company: { select: { name: true } },
     },
   });
-  if (!job) throw new ApiError(404, "no such job found");
-  if (college.id !== job.collegeId) throw new ApiError(403,"cant assign mentor to job outside your organization");
-  if (job.status === "closed") throw new ApiError(403, "cant assign mentor to closed job");
-  if (job.dueDate < new Date()) throw new ApiError(403, "cant assign mentor to expired job");
-  
-  let occured=false
-  await prisma.$transaction(async(tx)=>{
-    const updated=await tx.job.updateMany({
-      where: { id: jobId,isApproved:true,mentorId:null },
+  if (!job) {
+    log.error("job not found", {
+      requestId: req.requestId,
+      jobId,
+    });
+    throw new ApiError(404, "no such job found");
+  }
+
+  if (job.collegeId !== college.id) {
+    log.error("job belongs to another college", {
+      requestId: req.requestId,
+      jobCollegeId: job.collegeId,
+      collegeId: college.id,
+    });
+    throw new ApiError(403, "cannot assign mentor outside your college");
+  }
+
+  if (job.status === "closed" || job.dueDate < new Date()) {
+    log.info("assignMentor rejected due to job state", {
+      requestId: req.requestId,
+      jobStatus: job.status,
+      dueDate: job.dueDate,
+    });
+    throw new ApiError(403, "job is closed or expired");
+  }
+
+  let assigned = false;
+
+  await prisma.$transaction(async (tx) => {
+    if (!job.isApproved) {
+      log.info("assignMentor rejected: job not approved", {
+        requestId: req.requestId,
+        jobId,
+      });
+      throw new ApiError(403, "job is not approved");
+    }
+
+    const result = await tx.job.updateMany({
+      where: {
+        id: jobId,
+        mentorId: null,
+        isApproved: true,
+      },
       data: { mentorId },
     });
-    if (updated.count === 1) occured = true;
-  })
-  
-  if(occured){
+
+    if (result.count === 1) {
+      assigned = true;
+    }
+  });
+
+  if (!assigned) {
+    log.info("assignMentor no-op (already assigned)", {
+      requestId: req.requestId,
+      jobId,
+    });
+  }
+
+  if (assigned) {
+    log.info("mentor assigned successfully", {
+      requestId: req.requestId,
+      jobId,
+      mentorId,
+    });
+
+    // cache invalidation
+    await redisConnection.incr(
+      `college:${college.id}:mentor:${mentor.id}:version`,
+    );
+    await redisConnection.incr(`college:${college.id}:job:requests:version`);
+
     await emailQueue.add(
       "assign-mentor",
       {
@@ -434,23 +515,19 @@ const assignMentor = asyncHandler(async (req, res) => {
         companyName: job.company.name,
         mentorEmail: mentor.user.email,
       },
-      emailOptions
+      emailOptions,
     );
-
-    await redisConnection.incr(`company:job:${jobId}:version`);
-    //mentors
-    await redisConnection.incr(`college:${college.id}:mentors:version`);
-    //menotr details
-    await redisConnection.incr(`mentor:${mentor.id}:version`);
-  
-    await redisConnection.incr(`college:${college.id}:job:requests:version`);
-    await redisConnection.incr(`job:${job.id}:version`);
-    await redisConnection.incr(`college:${college.id}:jobs:version`);
   }
 
-
-  res.json(new ApiResponse(200, {mentorAssigned:occured,mentor}, occured?"mentor assigned successfully":"mentor already assigned"));
+  res.json(
+    new ApiResponse(
+      200,
+      { mentorId, jobId, assigned },
+      assigned ? "mentor assigned successfully" : "mentor already assigned",
+    ),
+  );
 });
+
 
 
 const getMentorsList = asyncHandler(async (req, res) => {
