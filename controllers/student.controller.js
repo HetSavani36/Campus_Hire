@@ -414,72 +414,105 @@ const addSkill = asyncHandler(async (req, res) => {
 
 
 const apply = asyncHandler(async (req, res) => {
-  
+  log.info("request.start", {
+    action: "applyJob",
+    actorId: req.user.id,
+    role: req.user.role,
+    ip: req.ip,
+    jobId: req.params.jobId,
+  });
+
   const { jobId } = req.params;
+
   const student = await prisma.student.findUnique({
     where: { userId: req.user.id },
-    select:{
-      id:true,
-      resume:true,
-      collegeId:true,
-      user:{
-        select:{
-          name:true,
-          email:true
-        }
-      }
-    }
+    select: {
+      id: true,
+      resume: true,
+      collegeId: true,
+      user: {
+        select: {
+          name: true,
+          email: true,
+        },
+      },
+    },
   });
   if (!student) throw new ApiError(404, "no such student found");
-  if (!student.resume) throw new ApiError(403, "please upload your resume first");
+  if (!student.resume)
+    throw new ApiError(403, "please upload your resume first");
 
-  const idempotencyKey=req.headers["idempotency-key"]
-  if(!idempotencyKey) throw new ApiError(403,"idempotency key header is required")
-  
-  let responseSnapshot=null
-  let occured=false
+  log.info("applyJob.student.resolved", {
+    studentId: student.id,
+    collegeId: student.collegeId,
+  });
 
-  await prisma.$transaction(async(tx)=>{
+  const idempotencyKey = req.headers["idempotency-key"];
+  if (!idempotencyKey)
+    throw new ApiError(403, "idempotency key header is required");
 
-    const existingKey=await tx.idempotencyKey.findUnique({
-      where:{key:idempotencyKey}
-    })
-    if(existingKey){
-      responseSnapshot=existingKey.response
-      occured=false
-      return
+  log.info("applyJob.idempotency.received", {
+    key: idempotencyKey,
+  });
+
+  let responseSnapshot = null;
+  let occured = false;
+
+  await prisma.$transaction(async (tx) => {
+    const existingKey = await tx.idempotencyKey.findUnique({
+      where: { key: idempotencyKey },
+    });
+
+    if (existingKey) {
+      responseSnapshot = existingKey.response;
+      occured = false;
+
+      log.info("applyJob.idempotency.hit", {
+        key: idempotencyKey,
+      });
+
+      return;
     }
 
     const job = await tx.job.findUnique({
       where: { id: jobId },
-      select:{
-        id:true,
-        collegeId:true,
-        status:true,
-        isApproved:true,
-        dueDate:true,
-        mentorId:true,
-        title:true
-      }
+      select: {
+        id: true,
+        collegeId: true,
+        status: true,
+        isApproved: true,
+        dueDate: true,
+        mentorId: true,
+        title: true,
+      },
     });
     if (!job) throw new ApiError(404, "no such job found");
-  
-    if (job.collegeId !== student.collegeId) throw new ApiError(403, "the job is not for your college");
-    if (!job.isApproved) throw new ApiError(403, "cant apply to un-approved job");
-    if (job.status === "closed") throw new ApiError(403, "job application is closed");
-    if (job.dueDate < new Date()) throw new ApiError(403, "the job application has expired");
+
+    log.info("applyJob.job.resolved", {
+      jobId: job.id,
+      collegeId: job.collegeId,
+    });
+
+    if (job.collegeId !== student.collegeId)
+      throw new ApiError(403, "the job is not for your college");
+    if (!job.isApproved)
+      throw new ApiError(403, "cant apply to un-approved job");
+    if (job.status === "closed")
+      throw new ApiError(403, "job application is closed");
+    if (job.dueDate < new Date())
+      throw new ApiError(403, "the job application has expired");
     if (!job.mentorId) throw new ApiError(403, "cant apply without mentor");
-  
-    
-    let application=null
-    const selectQuery={
+
+    let application = null;
+
+    const selectQuery = {
       id: true,
       status: true,
       appliedAt: true,
       job: {
         select: {
-          id:true,
-          title:true,
+          id: true,
+          title: true,
           company: {
             select: {
               email: true,
@@ -500,7 +533,7 @@ const apply = asyncHandler(async (req, res) => {
           },
         },
       },
-    }
+    };
 
     try {
       application = await tx.application.create({
@@ -509,35 +542,58 @@ const apply = asyncHandler(async (req, res) => {
           jobId: job.id,
           mentorId: job.mentorId,
         },
-        select: selectQuery
+        select: selectQuery,
       });
-      occured=true
 
+      occured = true;
+
+      log.info("applyJob.application.created", {
+        applicationId: application.id,
+        jobId: job.id,
+        studentId: student.id,
+      });
     } catch (error) {
-        if(error.code==="P2002"){
-          application = await tx.application.findUnique({
-            where: { studentId_jobId: { studentId: student.id, jobId:job.id } },
-            select:selectQuery
-          });
-          occured = false;
-        }
-        else throw error
+      if (error.code === "P2002") {
+        application = await tx.application.findUnique({
+          where: {
+            studentId_jobId: {
+              studentId: student.id,
+              jobId: job.id,
+            },
+          },
+          select: selectQuery,
+        });
+
+        occured = false;
+
+        log.info("applyJob.application.exists", {
+          applicationId: application.id,
+          jobId: job.id,
+          studentId: student.id,
+        });
+      } else {
+        throw error;
+      }
     }
 
-    responseSnapshot=application
+    responseSnapshot = application;
 
     await tx.idempotencyKey.create({
-      data:{
-        key:idempotencyKey,
-        userId:student.id,
-        endpoint:"POST /api/job/:jobId/apply",
-        response:responseSnapshot
-      }
-    })
-    
-  })
+      data: {
+        key: idempotencyKey,
+        userId: student.id,
+        endpoint: "POST /api/job/:jobId/apply",
+        response: responseSnapshot,
+      },
+    });
 
-  if(occured){
+    log.info("applyJob.idempotency.stored", {
+      key: idempotencyKey,
+      applicationId: responseSnapshot.id,
+    });
+  });
+
+  if (occured) {
     await emailQueue.add(
       "job-applied",
       {
@@ -546,13 +602,33 @@ const apply = asyncHandler(async (req, res) => {
         companyName: responseSnapshot.job.company.name,
         email: student.user.email,
       },
-      emailOptions
+      emailOptions,
     );
-    await redisConnection.incr(`company:job:${responseSnapshot.job.id}:version`)
-    await redisConnection.incr(`job:${responseSnapshot.job.id}:version`)
+
+    log.info("applyJob.email.queued", {
+      jobId: responseSnapshot.job.id,
+      studentId: student.id,
+    });
+
+    await redisConnection.incr(
+      `company:job:${responseSnapshot.job.id}:version`,
+    );
+    await redisConnection.incr(`job:${responseSnapshot.job.id}:version`);
+
+    log.info("applyJob.cache.invalidated", {
+      jobId: responseSnapshot.job.id,
+    });
   }
 
-  res.json(new ApiResponse(201, responseSnapshot, "your have applied to this job"));
+  log.info("request.success", {
+    action: "applyJob",
+    jobId,
+    occured,
+  });
+
+  res.json(
+    new ApiResponse(201, responseSnapshot, "your have applied to this job"),
+  );
 });
 
 const getJobsList = asyncHandler(async (req, res) => {
