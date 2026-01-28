@@ -422,97 +422,166 @@ const resetPassword = asyncHandler(async (req, res) => {
 
 
 const jobApprovalDecision = asyncHandler(async (req, res) => {
-  
   const { jobId, result } = req.params;
+
+  log.info("jobApprovalDecision request received", {
+    requestId: req.requestId,
+    adminId: req.user.id,
+    jobId,
+    rawResult: result,
+  });
+
   if (!jobId || !result) throw new ApiError(403, "please provide all details");
-  if (!["1","0"].includes(result)) throw new ApiError(403, "please provide correct decision");
+  if (!["1", "0"].includes(result))
+    throw new ApiError(403, "please provide correct decision");
 
   const college = await prisma.college.findUnique({
     where: { email: req.user.email },
-    select:{
-      id:true,
-      name:true
-    }
+    select: {
+      id: true,
+      name: true,
+    },
   });
-  if (!college) throw new ApiError(404, "no such college found");
 
-  let nextStatus= result==="1"?"approved":"rejected"
+  if (!college) {
+    log.error("jobApprovalDecision college not found", {
+      requestId: req.requestId,
+      adminId: req.user.id,
+    });
+    throw new ApiError(404, "no such college found");
+  }
+
+  const nextStatus = result === "1" ? "approved" : "rejected";
   let transitionOccurred = false;
   let jobSnapshot;
 
-  await prisma.$transaction(async(tx)=>{
+  await prisma.$transaction(async (tx) => {
     const job = await tx.job.findUnique({
       where: { id: jobId },
-      select:{
-        id:true,
-        title:true,
-        dueDate:true,
-        isApproved:true,
-        collegeId:true,
-        company:{
-          select:{
-            id:true,
-            name:true,
-            email:true
-          }
-        }
-      }
+      select: {
+        id: true,
+        title: true,
+        dueDate: true,
+        isApproved: true,
+        collegeId: true,
+        company: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+          },
+        },
+      },
     });
-    if (!job) throw new ApiError(404, "no such job found");
-  
-    if (job.collegeId !== college.id)
+
+    if (!job) {
+      log.info("jobApprovalDecision job not found", {
+        requestId: req.requestId,
+        jobId,
+      });
+      throw new ApiError(404, "no such job found");
+    }
+
+    if (job.collegeId !== college.id) {
+      log.warn("jobApprovalDecision cross-college access blocked", {
+        requestId: req.requestId,
+        jobId,
+        adminCollegeId: college.id,
+        jobCollegeId: job.collegeId,
+      });
       throw new ApiError(
         403,
-        "cant make decision for job request for another colleges"
+        "cant make decision for job request for another colleges",
       );
-    if (job.dueDate < new Date()) throw new ApiError(403, "job expired");
-    
-    const currentStatus=job.isApproved?"approved":"pending"
-    if(!canJobTransition(currentStatus,nextStatus)){
-      if(currentStatus===nextStatus){
-        jobSnapshot=job;
+    }
+
+    if (job.dueDate < new Date()) {
+      log.info("jobApprovalDecision job expired", {
+        requestId: req.requestId,
+        jobId,
+        dueDate: job.dueDate,
+      });
+      throw new ApiError(403, "job expired");
+    }
+
+    const currentStatus = job.isApproved ? "approved" : "pending";
+
+    if (!canJobTransition(currentStatus, nextStatus)) {
+      if (currentStatus === nextStatus) {
+        log.info("jobApprovalDecision idempotent decision detected", {
+          requestId: req.requestId,
+          jobId,
+          status: currentStatus,
+        });
+        jobSnapshot = job;
         return;
       }
+
+      log.warn("jobApprovalDecision invalid transition attempted", {
+        requestId: req.requestId,
+        jobId,
+        from: currentStatus,
+        to: nextStatus,
+      });
+
       throw new ApiError(
         409,
-        `Invalid job transition from ${currentStatus} to ${nextStatus}`
+        `Invalid job transition from ${currentStatus} to ${nextStatus}`,
       );
     }
-    else{
-      if(nextStatus==="approved"){
-        await tx.job.update({
-          where: { id: job.id },
-          data: { isApproved: true },
-        });
-      }
-      else{
-        await tx.jobSkill.deleteMany({
-          where: { jobId: job.id },
-        });
-        await tx.application.deleteMany({
-          where: { jobId: job.id },
-        });
-        await tx.job.delete({
-          where: { id: job.id },
-        });
-      }
-      transitionOccurred=true
-      jobSnapshot=job
-    }
-  })
 
-  if(transitionOccurred){
+    if (nextStatus === "approved") {
+      await tx.job.update({
+        where: { id: job.id },
+        data: { isApproved: true },
+      });
+
+      log.info("jobApprovalDecision job approved", {
+        requestId: req.requestId,
+        jobId,
+      });
+    } else {
+      await tx.jobSkill.deleteMany({
+        where: { jobId: job.id },
+      });
+
+      await tx.application.deleteMany({
+        where: { jobId: job.id },
+      });
+
+      await tx.job.delete({
+        where: { id: job.id },
+      });
+
+      log.info("jobApprovalDecision job rejected and cleaned up", {
+        requestId: req.requestId,
+        jobId,
+      });
+    }
+
+    transitionOccurred = true;
+    jobSnapshot = job;
+  });
+
+  if (transitionOccurred) {
     await emailQueue.add(
       "job-decision",
       {
-        companyName:jobSnapshot.company.name,
-        collegeName:college.name,
-        jobTitle:jobSnapshot.title,
-        status:nextStatus,
-        companyEmail:jobSnapshot.company.email,
+        companyName: jobSnapshot.company.name,
+        collegeName: college.name,
+        jobTitle: jobSnapshot.title,
+        status: nextStatus,
+        companyEmail: jobSnapshot.company.email,
       },
-      emailOptions
+      emailOptions,
     );
+
+    log.info("jobApprovalDecision company notified", {
+      requestId: req.requestId,
+      jobId,
+      companyId: jobSnapshot.company.id,
+      status: nextStatus,
+    });
 
     if (nextStatus === "approved") {
       const students = await prisma.student.findMany({
@@ -536,26 +605,38 @@ const jobApprovalDecision = asyncHandler(async (req, res) => {
             companyName: jobSnapshot.company.name,
             jobTitle: jobSnapshot.title,
           },
-          emailOptions
+          emailOptions,
         );
       }
+
+      log.info("jobApprovalDecision students notified", {
+        requestId: req.requestId,
+        jobId,
+        notifiedCount: students.length,
+      });
     }
+
     await redisConnection.incr(`company:job:${jobId}:version`);
-    await redisConnection.incr(`company:${jobSnapshot.company.id}:jobs:version`);
+    await redisConnection.incr(
+      `company:${jobSnapshot.company.id}:jobs:version`,
+    );
     await redisConnection.incr(`college:${college.id}:job:requests:version`);
     await redisConnection.incr(`college:${college.id}:mentors:version`);
     await redisConnection.incr(`college:${college.id}:jobs:version`);
-  };
 
+    log.info("jobApprovalDecision cache invalidated", {
+      requestId: req.requestId,
+      jobId,
+      companyId: jobSnapshot.company.id,
+      collegeId: college.id,
+    });
+  }
 
   res.json(
-    new ApiResponse(
-      200,
-      {status:nextStatus} ,
-      `the job is ${nextStatus}`
-    )
+    new ApiResponse(200, { status: nextStatus }, `the job is ${nextStatus}`),
   );
 });
+
 
 const assignMentor = asyncHandler(async (req, res) => {
   const { mentorId } = req.body;
