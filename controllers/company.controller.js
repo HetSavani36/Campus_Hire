@@ -643,16 +643,33 @@ const postJob = asyncHandler(async (req, res) => {
 
 
 const makeStudentApplicationDecision = asyncHandler(async (req, res) => {
+  log.info("request.start", {
+    action: "makeStudentApplicationDecision",
+    actorId: req.user.id,
+    role: req.user.role,
+    ip: req.ip,
+  });
+
   const { applicationId } = req.params;
   const { result } = req.body;
-  if (!applicationId || !result) throw new ApiError(403, "please provide studentId and your decision");
-  if ( !["1","0"].includes(result)) throw new ApiError(403, "please provide proper decision in either 0 or 1");
+
+  if (!applicationId || !result) {
+    throw new ApiError(403, "please provide studentId and your decision");
+  }
+  if (!["1", "0"].includes(result)) {
+    throw new ApiError(403, "please provide proper decision in either 0 or 1");
+  }
 
   const nextStatus = result === "1" ? "shortlisted" : "rejected";
-  let application=null
-  let occured=false
+  let application = null;
+  let occured = false;
 
-  await prisma.$transaction(async(tx)=>{
+  log.info("makeDecision.input.validated", {
+    applicationId,
+    nextStatus,
+  });
+
+  await prisma.$transaction(async (tx) => {
     const tempApplication = await tx.application.findUnique({
       where: { id: applicationId },
       select: {
@@ -670,7 +687,7 @@ const makeStudentApplicationDecision = asyncHandler(async (req, res) => {
         },
         job: {
           select: {
-            id:true,
+            id: true,
             title: true,
             company: {
               select: {
@@ -681,55 +698,95 @@ const makeStudentApplicationDecision = asyncHandler(async (req, res) => {
         },
       },
     });
-    if (!tempApplication) throw new ApiError(404, "no such application found");
+
+    if (!tempApplication) {
+      throw new ApiError(404, "no such application found");
+    }
 
     const currentStatus = tempApplication.status;
-    if(!canStudentApplicationTransition(currentStatus,nextStatus)) {
-      if(currentStatus===nextStatus) {
+
+    if (!canStudentApplicationTransition(currentStatus, nextStatus)) {
+      if (currentStatus === nextStatus) {
         application = tempApplication;
-        return
+
+        log.info("makeDecision.noop", {
+          applicationId,
+          status: currentStatus,
+        });
+
+        return;
+      } else {
+        log.warn("makeDecision.invalid_transition", {
+          applicationId,
+          fromStatus: currentStatus,
+          toStatus: nextStatus,
+        });
+
+        throw new ApiError(
+          409,
+          `invalid job transition from ${currentStatus} to ${nextStatus}`,
+        );
       }
-      else throw new ApiError(409,`invalid job transition from ${currentStatus} to ${nextStatus}`)
     }
 
-    const updated=await tx.application.updateMany({
-      where:{id:tempApplication.id,status:currentStatus},
-      data:{status:nextStatus}
-    })
-    
-    if(updated.count===1){
-      occured=true
-      application={
+    const updated = await tx.application.updateMany({
+      where: { id: tempApplication.id, status: currentStatus },
+      data: { status: nextStatus },
+    });
+
+    if (updated.count === 1) {
+      occured = true;
+      application = {
         ...updated,
-        status:nextStatus
-      }
-    }
-  })
+        status: nextStatus,
+      };
 
-  if(occured){
+      log.info("makeDecision.status.updated", {
+        applicationId,
+        fromStatus: currentStatus,
+        toStatus: nextStatus,
+      });
+    }
+  });
+
+  if (occured) {
     await emailQueue.add(
       "student-application-decision-company",
       {
         studentName: application.student.user.name,
-        companyName:application.job.company.name,
-        jobTitle:application.job.title,
-        status:nextStatus,
+        companyName: application.job.company.name,
+        jobTitle: application.job.title,
+        status: nextStatus,
         studentEmail: application.student.user.email,
       },
-      emailOptions
+      emailOptions,
     );
-    
+
+    log.info("makeDecision.email.queued", {
+      applicationId,
+      jobId: application.job.id,
+      status: nextStatus,
+    });
+
     await redisConnection.incr(`company:job:${application.job.id}:version`);
+
+    log.info("makeDecision.cache.invalidated", {
+      jobId: application.job.id,
+    });
   }
 
+  log.info("request.success", {
+    action: "makeStudentApplicationDecision",
+    applicationId,
+    occured,
+    finalStatus: nextStatus,
+  });
+
   res.json(
-    new ApiResponse(
-      200,
-      application,
-      `the student has been ${nextStatus}`
-    )
+    new ApiResponse(200, application, `the student has been ${nextStatus}`),
   );
 });
+
 
 const getEmployeesList = asyncHandler(async (req, res) => {
   const { search } = req.query;
