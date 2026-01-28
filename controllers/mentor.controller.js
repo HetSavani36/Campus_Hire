@@ -8,105 +8,188 @@ import { redisConnection } from "../config/redis.js";
 const prisma=new PrismaClient()
 
 const makeStudentApplicationDecision = asyncHandler(async (req, res) => {
-    const { applicationId, result } = req.params;
-    if (!applicationId || !result) throw new ApiError(403, "please provide studentId and your decision");
-    if ( !["1","0"].includes(result)) throw new ApiError(403, "please provide proper decision in either 0 or 1");
+  log.info("request.start", {
+    action: "makeStudentApplicationDecision",
+    actorId: req.user.id,
+    role: req.user.role,
+    ip: req.ip,
+    applicationId: req.params.applicationId,
+  });
 
-    const nextStatus = result === "1" ? "approved" : "rejected";
-    let applicationSnapshot=null
-    let occured=false
+  const { applicationId, result } = req.params;
+  if (!applicationId || !result)
+    throw new ApiError(403, "please provide studentId and your decision");
+  if (!["1", "0"].includes(result))
+    throw new ApiError(403, "please provide proper decision in either 0 or 1");
 
-    await prisma.$transaction(async(tx)=>{
-      const selectQuery={
-        status:true,
-        mentorApproval:true,
-        id:true,
-        student:{
-          select:{
-            user:{
-              select:{
-                name:true,
-                email:true
-              }
-            }
-          }
+  const nextStatus = result === "1" ? "approved" : "rejected";
+  let applicationSnapshot = null;
+  let occured = false;
+
+  log.info("mentorDecision.input.validated", {
+    applicationId,
+    nextStatus,
+  });
+
+  await prisma.$transaction(async (tx) => {
+    const selectQuery = {
+      status: true,
+      mentorApproval: true,
+      id: true,
+      student: {
+        select: {
+          user: {
+            select: {
+              name: true,
+              email: true,
+            },
+          },
         },
-        mentor:{
-          select:{
-            user:{
-              select:{
-                name:true,
-                id:true
-              }
-            }
-          }
+      },
+      mentor: {
+        select: {
+          user: {
+            select: {
+              name: true,
+              id: true,
+            },
+          },
         },
-        job:{
-          select:{
-            id:true,
-            title:true,
-            company:{
-              select:{
-                name:true
-              }
-            }
-          }
-        }
-      }
-      const application = await tx.application.findFirst({
-          where: { id: applicationId,mentorId:{not:null},status:"shortlisted" },
-          select:selectQuery
+      },
+      job: {
+        select: {
+          id: true,
+          title: true,
+          company: {
+            select: {
+              name: true,
+            },
+          },
+        },
+      },
+    };
+
+    const application = await tx.application.findFirst({
+      where: {
+        id: applicationId,
+        mentorId: { not: null },
+        status: "shortlisted",
+      },
+      select: selectQuery,
+    });
+
+    if (!application) {
+      log.warn("mentorDecision.not_found", {
+        applicationId,
       });
-      if (!application) throw new ApiError(404, "no such application found");
-      if(application.mentor.user.id!==req.user.id) throw new ApiError(403,"you dont have privilage to approve/reject this application")
 
-      const currentStatus=application.mentorApproval
-      if(!canJobTransition(currentStatus,nextStatus)){
-        if(currentStatus===nextStatus) {
-          applicationSnapshot=application
-          return
-        }
-        throw new ApiError(409,`cant transit from ${currentStatus} to ${nextStatus}`)
-      }
-
-      const updated=await tx.application.updateMany({
-        where:{id:application.id,mentorApproval:currentStatus},
-        data:{mentorApproval:nextStatus}
-      })
-      if(updated.count===1) {
-        applicationSnapshot={
-          ...application,
-          mentorApproval:nextStatus
-        }
-        occured=true
-      }
-    })
-
-    if(occured){
-      await emailQueue.add(
-        "mentor-decision",
-        {
-          studentName: applicationSnapshot.student.user.name,
-          mentorName:applicationSnapshot.mentor.user.name,
-          companyName:applicationSnapshot.job.company.name,
-          jobTitle:applicationSnapshot.job.title,
-          status: nextStatus,
-          studentEmail: applicationSnapshot.student.user.email,
-        },
-        emailOptions
-      );
-
-      await redisConnection.incr(`company:job:${applicationSnapshot.job.id}:version`)
+      throw new ApiError(404, "no such application found");
     }
 
-    res.json(
-        new ApiResponse(
-            200,
-            applicationSnapshot,
-            `the student application has been ${nextStatus} by mentor`
-        )
+    if (application.mentor.user.id !== req.user.id) {
+      log.warn("mentorDecision.forbidden", {
+        applicationId,
+        mentorId: application.mentor.user.id,
+        actorId: req.user.id,
+      });
+
+      throw new ApiError(
+        403,
+        "you dont have privilage to approve/reject this application",
+      );
+    }
+
+    const currentStatus = application.mentorApproval;
+
+    if (!canJobTransition(currentStatus, nextStatus)) {
+      if (currentStatus === nextStatus) {
+        applicationSnapshot = application;
+
+        log.info("mentorDecision.noop", {
+          applicationId,
+          status: currentStatus,
+        });
+
+        return;
+      }
+
+      log.warn("mentorDecision.invalid_transition", {
+        applicationId,
+        fromStatus: currentStatus,
+        toStatus: nextStatus,
+      });
+
+      throw new ApiError(
+        409,
+        `cant transit from ${currentStatus} to ${nextStatus}`,
+      );
+    }
+
+    const updated = await tx.application.updateMany({
+      where: { id: application.id, mentorApproval: currentStatus },
+      data: { mentorApproval: nextStatus },
+    });
+
+    if (updated.count === 1) {
+      applicationSnapshot = {
+        ...application,
+        mentorApproval: nextStatus,
+      };
+      occured = true;
+
+      log.info("mentorDecision.status.updated", {
+        applicationId,
+        fromStatus: currentStatus,
+        toStatus: nextStatus,
+      });
+    }
+  });
+
+  if (occured) {
+    await emailQueue.add(
+      "mentor-decision",
+      {
+        studentName: applicationSnapshot.student.user.name,
+        mentorName: applicationSnapshot.mentor.user.name,
+        companyName: applicationSnapshot.job.company.name,
+        jobTitle: applicationSnapshot.job.title,
+        status: nextStatus,
+        studentEmail: applicationSnapshot.student.user.email,
+      },
+      emailOptions,
     );
+
+    log.info("mentorDecision.email.queued", {
+      applicationId,
+      jobId: applicationSnapshot.job.id,
+      status: nextStatus,
+    });
+
+    await redisConnection.incr(
+      `company:job:${applicationSnapshot.job.id}:version`,
+    );
+
+    log.info("mentorDecision.cache.invalidated", {
+      jobId: applicationSnapshot.job.id,
+    });
+  }
+
+  log.info("request.success", {
+    action: "makeStudentApplicationDecision",
+    applicationId,
+    occured,
+    finalStatus: nextStatus,
+  });
+
+  res.json(
+    new ApiResponse(
+      200,
+      applicationSnapshot,
+      `the student application has been ${nextStatus} by mentor`,
+    ),
+  );
 });
+
 
 const getAllJobs=asyncHandler(async(req,res)=>{
     const {filter="current"}=req.query
