@@ -1021,166 +1021,6 @@ const getEmployeeDetail = asyncHandler(async (req, res) => {
 
 
 const getAllColleges = asyncHandler(async (req, res) => {
-  let { filter = "all" } = req.query;
-  const { page, limit, skip } = getPagination(req.query);
-
-  const company = await prisma.company.findUnique({
-    where: { email: req.user.email },
-    select: { id: true },
-  });
-  if (!company) throw new ApiError(404, "no such company found");
-
-  const version = (await redisConnection.get(`colleges:version`)) || 1;
-
-  const cacheKey = `colleges:v${version}:filter:${filter}:page:${page}:limit:${limit}`;
-  const cached = await redisConnection.get(cacheKey);
-  if (cached) {
-    return res.json(
-      new ApiResponse(200, JSON.parse(cached), "all colleges(cached)"),
-    );
-  }
-
-  const collegeSelect = {
-    id: true,
-    name: true,
-    address: true,
-    email: true,
-  };
-
-  let colleges = [];
-  let totalColleges = 0;
-
-  /* --------------------------------------------------
-     FILTER: ALL  (paginate colleges directly)
-  -------------------------------------------------- */
-  if (filter === "all") {
-    const [rows, count] = await prisma.$transaction([
-      prisma.college.findMany({
-        skip,
-        take: limit,
-        orderBy: { name: "asc" },
-        select: {
-          ...collegeSelect,
-          collabs: {
-            where: { companyId: company.id },
-            select: { status: true },
-          },
-        },
-      }),
-      prisma.college.count(),
-    ]);
-
-    colleges = rows.map((c) => ({
-      id: c.id,
-      name: c.name,
-      address: c.address,
-      email: c.email,
-      status:
-        c.collabs.length === 0
-          ? "not applied"
-          : c.collabs[0].status === "accepted"
-          ? "collaborated"
-          : c.collabs[0].status,
-    }));
-
-    totalColleges = count;
-  } else if (["pending", "rejected", "collaborated"].includes(filter)) {
-
-  /* --------------------------------------------------
-     FILTER: pending / rejected / collaborated
-     (paginate collabs, NOT colleges)
-  -------------------------------------------------- */
-    const statusMap = {
-      pending: "pending",
-      rejected: "rejected",
-      collaborated: "accepted",
-    };
-
-    const whereClause = {
-      companyId: company.id,
-      status: statusMap[filter],
-    };
-
-    const [rows, count] = await prisma.$transaction([
-      prisma.collab.findMany({
-        where: whereClause,
-        skip,
-        take: limit,
-        orderBy: { college: { name: "asc" } },
-        select: {
-          status: true,
-          college: { select: collegeSelect },
-        },
-      }),
-      prisma.collab.count({ where: whereClause }),
-    ]);
-
-    colleges = rows.map((r) => ({
-      ...r.college,
-      status: filter === "collaborated" ? "collaborated" : r.status,
-    }));
-
-    totalColleges = count;
-  } else if (filter === "not_applied") {
-
-  /* --------------------------------------------------
-     FILTER: not_applied
-     (paginate colleges NOT having a collab)
-  -------------------------------------------------- */
-    const whereClause = {
-      collabs: {
-        none: {
-          companyId: company.id,
-        },
-      },
-    };
-
-    const [rows, count] = await prisma.$transaction([
-      prisma.college.findMany({
-        where: whereClause,
-        skip,
-        take: limit,
-        orderBy: { name: "asc" },
-        select: collegeSelect,
-      }),
-      prisma.college.count({ where: whereClause }),
-    ]);
-
-    colleges = rows.map((c) => ({
-      ...c,
-      status: "not applied",
-    }));
-
-    totalColleges = count;
-  } else {
-    throw new ApiError(400, "invalid filter");
-  }
-
-  const responsePayLoad = {
-    colleges,
-    pagination: {
-      page,
-      limit,
-      totalColleges,
-      totalPages: Math.ceil(totalColleges / limit),
-      hasPrevPage: page > 1,
-      hasNextPage: skip + colleges.length < totalColleges,
-    },
-  };
-
-  await redisConnection.incr(cacheKey,60,JSON.stringify(responsePayLoad))
-
-  res.json(
-    new ApiResponse(
-      200,
-      responsePayLoad,
-      "colleges list"
-    )
-  );
-});
-
-
-const getAllColleges = asyncHandler(async (req, res) => {
   log.info("request.start", {
     action: "getAllColleges",
     actorId: req.user.id,
@@ -1383,6 +1223,85 @@ const getAllColleges = asyncHandler(async (req, res) => {
 
   res.json(new ApiResponse(200, responsePayLoad, "colleges list"));
 });
+
+
+
+const getCollegeDetails = async (req, res) => {
+  log.info("request.start", {
+    action: "getCollegeDetails",
+    actorId: req.user?.id,
+    role: req.user?.role,
+    ip: req.ip,
+    collegeId: req.params.collegeId,
+  });
+
+  const { collegeId } = req.params;
+
+  const version =
+    (await redisConnection.get(`college:${collegeId}:version`)) || 1;
+
+  const cacheKey = `college:${collegeId}}:v${version}`;
+  const cached = await redisConnection.get(cacheKey);
+
+  if (cached) {
+    log.info("getCollege.cache.hit", {
+      collegeId,
+    });
+
+    return res.json(
+      new ApiResponse(200, JSON.parse(cached), "college details(cached)"),
+    );
+  }
+
+  log.info("getCollege.cache.miss", {
+    collegeId,
+  });
+
+  let college = await prisma.college.findUnique({
+    where: { id: collegeId },
+    select: {
+      id: true,
+      name: true,
+      address: true,
+      email: true,
+      phone: true,
+      collabs: {
+        where: {
+          status: "accepted",
+        },
+      },
+    },
+  });
+
+  if (!college) {
+    log.warn("getCollege.not_found", {
+      collegeId,
+    });
+
+    throw new ApiError(404, "no such college found");
+  }
+
+  college = {
+    ...college,
+    collaboratedCount: college.collabs.length,
+  };
+  college.collabs = undefined;
+
+  await redisConnection.setex(cacheKey, 60, JSON.stringify(college));
+
+  log.info("getCollege.cache.set", {
+    collegeId,
+    ttl: 60,
+  });
+
+  log.info("request.success", {
+    action: "getCollegeDetails",
+    collegeId,
+  });
+
+  res.json(new ApiResponse(200, college, "college details"));
+};
+
 
 
 const getAllJobs = asyncHandler(async (req, res) => {
