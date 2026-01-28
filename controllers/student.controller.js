@@ -151,6 +151,13 @@ const uploadBulkStudents = asyncHandler(async (req, res) => {
 
 
 const createProfile = asyncHandler(async (req, res) => {
+  log.info("request.start", {
+    action: "createProfile",
+    actorId: req.user.id,
+    role: req.user.role,
+    ip: req.ip,
+  });
+
   const { year, aboutMe, branch } = req.body;
 
   if (!year || !branch) {
@@ -160,6 +167,11 @@ const createProfile = asyncHandler(async (req, res) => {
   if (!["1", "2", "3", "4"].includes(year)) {
     throw new ApiError(400, "invalid year");
   }
+
+  log.info("createProfile.input.validated", {
+    year,
+    branch,
+  });
 
   await prisma.$transaction(async (tx) => {
     const user = await tx.user.findUnique({
@@ -171,8 +183,20 @@ const createProfile = asyncHandler(async (req, res) => {
       },
     });
 
-    if (!user) throw new ApiError(404, "user not found");
+    if (!user) {
+      log.warn("createProfile.user.not_found", {
+        userId: req.user.id,
+      });
+
+      throw new ApiError(404, "user not found");
+    }
+
     if (!user.metadata?.collegeId || !user.metadata?.rollNo) {
+      log.warn("createProfile.metadata.missing", {
+        userId: user.id,
+        metadata: user.metadata,
+      });
+
       throw new ApiError(403, "collegeId or rollNo missing");
     }
 
@@ -192,11 +216,21 @@ const createProfile = asyncHandler(async (req, res) => {
           aboutMe: aboutMe ?? null,
         },
       });
+
+      log.info("createProfile.student.created", {
+        userId: user.id,
+        collegeId: user.metadata.collegeId,
+      });
     }
 
     await tx.user.updateMany({
       where: { id: user.id, hasCompletedProfile: false },
       data: { hasCompletedProfile: true },
+    });
+
+    log.info("createProfile.user.updated", {
+      userId: user.id,
+      hasCompletedProfile: true,
     });
   });
 
@@ -227,8 +261,15 @@ const createProfile = asyncHandler(async (req, res) => {
     },
   });
 
+  log.info("request.success", {
+    action: "createProfile",
+    userId: req.user.id,
+    hasCompletedProfile: finalUser?.hasCompletedProfile,
+  });
+
   res.json(new ApiResponse(200, finalUser, "profile created successfully"));
 });
+
 
 
 const editProfile = asyncHandler(async (req, res) => {
