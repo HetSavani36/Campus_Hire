@@ -553,21 +553,44 @@ const refreshController = asyncHandler(async (req, res) => {
 
 
 const getMe = asyncHandler(async (req, res) => {
+  log.info("getMe request received", {
+    requestId: req.requestId,
+    userId: req.user.id,
+    role: req.user.role,
+    ip: req.ip,
+    userAgent: req.headers["user-agent"],
+  });
+
   const user = await prisma.user.findUnique({
     where: { id: req.user.id },
-    select:{
-      createdAt:true,
-      email:true,
-      id:true,
-      name:true,
-      role:true,
-      hasCompletedProfile:true
-    }
+    select: {
+      createdAt: true,
+      email: true,
+      id: true,
+      name: true,
+      role: true,
+      hasCompletedProfile: true,
+    },
   });
-  if (!user) throw new ApiError(404, "user not found");
+
+  if (!user) {
+    log.error("getMe failed: user not found", {
+      requestId: req.requestId,
+      userId: req.user.id,
+    });
+    throw new ApiError(404, "user not found");
+  }
+
+  log.info("getMe success", {
+    requestId: req.requestId,
+    userId: user.id,
+    role: user.role,
+    hasCompletedProfile: user.hasCompletedProfile,
+  });
 
   res.json(new ApiResponse(200, user, "user profile"));
 });
+
 
 export {
   registerCollege,
