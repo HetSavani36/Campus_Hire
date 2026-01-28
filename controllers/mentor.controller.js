@@ -191,67 +191,99 @@ const makeStudentApplicationDecision = asyncHandler(async (req, res) => {
 });
 
 
-const getAllJobs=asyncHandler(async(req,res)=>{
-    const {filter="current"}=req.query
-    const { page, limit, skip } = getPagination(req.query);
+const getAllJobs = asyncHandler(async (req, res) => {
+  log.info("request.start", {
+    action: "getAllJobs",
+    actorId: req.user.id,
+    role: req.user.role,
+    ip: req.ip,
+  });
 
-    const mentor=await prisma.mentor.findUnique({
-        where:{userId:req.user.id},
-        select:{
-          id:true,
-          collegeId:true
-        }
-    })
-    if(!mentor) throw new ApiError(404,"no such mentor found")
+  const { filter = "current" } = req.query;
+  const { page, limit, skip } = getPagination(req.query);
 
-    let whereClause={
-        collegeId:mentor.collegeId,
-        mentorId:mentor.id
-    }
-    if (filter === "past") whereClause.dueDate = { lt: new Date() };
-    if (filter === "current") whereClause.dueDate = { gte: new Date() };
+  const mentor = await prisma.mentor.findUnique({
+    where: { userId: req.user.id },
+    select: {
+      id: true,
+      collegeId: true,
+    },
+  });
+  if (!mentor) throw new ApiError(404, "no such mentor found");
 
-    const [jobs,totalJobs]=await prisma.$transaction([
-      prisma.job.findMany({
-          where:whereClause,
-          skip:skip,
-          take:limit,
-          orderBy:{createdAt:"desc"},
-          select:{
-              id:true,
-              title:true,
-              salary:true,
-              dueDate:true,
-              company:{
-                  select:{
-                      name:true,
-                      email:true
-                  }
-              }
-          }
-      }),
+  log.info("mentor.resolved", {
+    mentorId: mentor.id,
+    collegeId: mentor.collegeId,
+  });
 
-      prisma.job.count({where:whereClause})
-    ])
+  let whereClause = {
+    collegeId: mentor.collegeId,
+    mentorId: mentor.id,
+  };
 
-    res.json(
-      new ApiResponse(
-        200,
-        {
-          jobs,
-          pagination: {
-            page,
-            limit,
-            totalJobs,
-            totalPages: Math.ceil(totalJobs / limit),
-            hasPrevPage: page > 1,
-            hasNextPage: skip+jobs.length < totalJobs,
+  if (filter === "past") whereClause.dueDate = { lt: new Date() };
+  if (filter === "current") whereClause.dueDate = { gte: new Date() };
+
+  log.info("mentorJobs.filter.applied", {
+    mentorId: mentor.id,
+    filter,
+  });
+
+  const [jobs, totalJobs] = await prisma.$transaction([
+    prisma.job.findMany({
+      where: whereClause,
+      skip: skip,
+      take: limit,
+      orderBy: { createdAt: "desc" },
+      select: {
+        id: true,
+        title: true,
+        salary: true,
+        dueDate: true,
+        company: {
+          select: {
+            name: true,
+            email: true,
           },
         },
-        "jobs under mentor"
-      )
-    );
-})
+      },
+    }),
+
+    prisma.job.count({ where: whereClause }),
+  ]);
+
+  log.info("mentorJobs.query.executed", {
+    mentorId: mentor.id,
+    returnedCount: jobs.length,
+    totalJobs,
+  });
+
+  log.info("request.success", {
+    action: "getAllJobs",
+    mentorId: mentor.id,
+    filter,
+    returnedCount: jobs.length,
+  });
+
+  res.json(
+    new ApiResponse(
+      200,
+      {
+        jobs,
+        pagination: {
+          page,
+          limit,
+          totalJobs,
+          totalPages: Math.ceil(totalJobs / limit),
+          hasPrevPage: page > 1,
+          hasNextPage: skip + jobs.length < totalJobs,
+        },
+      },
+      "jobs under mentor",
+    ),
+  );
+});
+
 
 
 const getJobDetails = asyncHandler(async (req, res) => {
