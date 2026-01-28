@@ -271,14 +271,22 @@ const collabWithCollege = asyncHandler(async (req, res) => {
 
 
 const resetPassword = asyncHandler(async (req, res) => {
+  log.info("request.start", {
+    action: "resetPassword",
+    actorId: req.user.id,
+    role: req.user.role,
+    targetUserId: req.params.userId,
+    ip: req.ip,
+  });
+
   const { userId } = req.params;
+
   const user = await prisma.user.findUnique({
     where: { id: userId },
     select: {
       id: true,
-      name:true,
+      name: true,
       email: true,
-      password: true,
       employee: {
         select: {
           companyId: true,
@@ -290,38 +298,71 @@ const resetPassword = asyncHandler(async (req, res) => {
 
   const company = await prisma.company.findUnique({
     where: { email: req.user.email },
+    select: { id: true, name: true },
   });
   if (!company) throw new ApiError(404, "no such company found");
-  if (!user.employee) throw new ApiError(403, "you can only reset password of employee");
-  if (user.employee.companyId !== company.id) throw new ApiError(403,"you cant reset password of user outside your organization");
+
+  if (!user.employee)
+    throw new ApiError(403, "you can only reset password of employee");
+
+  if (user.employee.companyId !== company.id)
+    throw new ApiError(
+      403,
+      "you cant reset password of user outside your organization",
+    );
+
+  log.info("authz.passed", {
+    action: "resetPassword",
+    companyId: company.id,
+    targetUserId: user.id,
+  });
 
   const password = generatePassword(8);
   const hashedPassword = await hashPassword(password);
 
-  await prisma.user.update({
-    where: { id: user.id },
-    data: {
-      password: hashedPassword,
-    },
+  await prisma.$transaction(async (tx) => {
+    await tx.user.update({
+      where: { id: user.id },
+      data: { password: hashedPassword },
+    });
+
+    await tx.session.updateMany({
+      where: { userId: user.id },
+      data: { revokedAt: new Date() },
+    });
   });
 
-  await tx.session.updateMany({
-    where: { userId: user.id },
-    data: { revokedAt: new Date() },
+  log.warn("security.password_reset", {
+    targetUserId: user.id,
+    companyId: company.id,
+    sessionsRevoked: true,
   });
 
   await emailQueue.add(
     "reset-password",
     {
-      name:user.name,
-      email:user.email,
-      role:"employee",
+      name: user.name,
+      email: user.email,
+      role: "employee",
     },
-    emailOptions
+    emailOptions,
   );
+
+  log.info("side_effect.email_enqueued", {
+    action: "resetPassword",
+    queue: "reset-password",
+    targetUserEmail: user.email,
+  });
+
+  log.info("request.success", {
+    action: "resetPassword",
+    targetUserId: user.id,
+    companyId: company.id,
+  });
 
   res.json(new ApiResponse(200, {}, "password reset successfully"));
 });
+
 
 const addSkill = asyncHandler(async (req, res) => {
   const { name } = req.body;
