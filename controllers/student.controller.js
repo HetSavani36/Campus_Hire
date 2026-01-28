@@ -632,6 +632,13 @@ const apply = asyncHandler(async (req, res) => {
 });
 
 const getJobsList = asyncHandler(async (req, res) => {
+  log.info("request.start", {
+    action: "getJobsList",
+    actorId: req.user.id,
+    role: req.user.role,
+    ip: req.ip,
+  });
+
   const { filter = "current" } = req.query;
   const { page, limit, skip } = getPagination(req.query);
 
@@ -644,15 +651,37 @@ const getJobsList = asyncHandler(async (req, res) => {
   });
   if (!student) throw new ApiError(404, "no such student found");
 
-  const version = (await redisConnection.get(`college:${student.collegeId}:jobs:version`)) || 1;
+  log.info("student.resolved", {
+    studentId: student.id,
+    collegeId: student.collegeId,
+  });
+
+  const version =
+    (await redisConnection.get(`college:${student.collegeId}:jobs:version`)) ||
+    1;
 
   const cacheKey = `college:${student.collegeId}:jobs:v${version}:filter:${filter}:page:${page}:limit:${limit}`;
   const cached = await redisConnection.get(cacheKey);
+
   if (cached) {
+    log.info("studentJobs.cache.hit", {
+      collegeId: student.collegeId,
+      filter,
+      page,
+      limit,
+    });
+
     return res.json(
       new ApiResponse(200, JSON.parse(cached), "jobs list(cached)"),
     );
   }
+
+  log.info("studentJobs.cache.miss", {
+    collegeId: student.collegeId,
+    filter,
+    page,
+    limit,
+  });
 
   const now = new Date();
 
@@ -670,6 +699,10 @@ const getJobsList = asyncHandler(async (req, res) => {
      JOB-BASED FILTERS
   -------------------------------------------------- */
   if (["current", "past", "all"].includes(filter)) {
+    log.info("studentJobs.filter.job_based", {
+      filter,
+    });
+
     const whereClause = {
       status: "active",
       collegeId: student.collegeId,
@@ -693,10 +726,9 @@ const getJobsList = asyncHandler(async (req, res) => {
     jobs = rows;
     totalJobs = count;
   } else if (
-
-  /* --------------------------------------------------
-     APPLICATION-BASED FILTERS
-  -------------------------------------------------- */
+    /* --------------------------------------------------
+       APPLICATION-BASED FILTERS
+    -------------------------------------------------- */
     [
       "pending",
       "rejected",
@@ -707,6 +739,10 @@ const getJobsList = asyncHandler(async (req, res) => {
       "mentor_approval_rejected",
     ].includes(filter)
   ) {
+    log.info("studentJobs.filter.application_based", {
+      filter,
+    });
+
     const whereClause = {
       studentId: student.id,
       ...(filter === "pending" && { status: "pending" }),
@@ -740,10 +776,11 @@ const getJobsList = asyncHandler(async (req, res) => {
     jobs = rows.map((r) => r.job);
     totalJobs = count;
   } else if (filter === "not_applied") {
+    /* --------------------------------------------------
+       NOT APPLIED
+    -------------------------------------------------- */
+    log.info("studentJobs.filter.not_applied");
 
-  /* --------------------------------------------------
-     NOT APPLIED
-  -------------------------------------------------- */
     const whereClause = {
       status: "active",
       collegeId: student.collegeId,
@@ -770,8 +807,19 @@ const getJobsList = asyncHandler(async (req, res) => {
     jobs = rows;
     totalJobs = count;
   } else {
+    log.warn("studentJobs.filter.invalid", {
+      filter,
+    });
+
     throw new ApiError(400, "invalid filter");
   }
+
+  log.info("studentJobs.query.executed", {
+    collegeId: student.collegeId,
+    filter,
+    returnedCount: jobs.length,
+    totalJobs,
+  });
 
   const responsePayLoad = {
     jobs,
@@ -785,16 +833,26 @@ const getJobsList = asyncHandler(async (req, res) => {
     },
   };
 
-  await redisConnection.setex(cacheKey,60,JSON.stringify(responsePayLoad))
+  await redisConnection.setex(cacheKey, 60, JSON.stringify(responsePayLoad));
 
-  res.json(
-    new ApiResponse(
-      200,
-      responsePayLoad,
-      "student jobs"
-    )
-  );
+  log.info("studentJobs.cache.set", {
+    collegeId: student.collegeId,
+    filter,
+    page,
+    limit,
+    ttl: 60,
+  });
+
+  log.info("request.success", {
+    action: "getJobsList",
+    studentId: student.id,
+    filter,
+    returnedCount: jobs.length,
+  });
+
+  res.json(new ApiResponse(200, responsePayLoad, "student jobs"));
 });
+
 
 
 const getJobDetail = asyncHandler(async (req, res) => {
