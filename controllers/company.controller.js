@@ -789,24 +789,51 @@ const makeStudentApplicationDecision = asyncHandler(async (req, res) => {
 
 
 const getEmployeesList = asyncHandler(async (req, res) => {
+  log.info("request.start", {
+    action: "getEmployeesList",
+    actorId: req.user.id,
+    role: req.user.role,
+    ip: req.ip,
+  });
+
   const { search } = req.query;
   const { page, limit, skip } = getPagination(req.query);
 
   const company = await prisma.company.findUnique({
     where: { email: req.user.email },
-    select:{id:true}
+    select: { id: true },
   });
   if (!company) throw new ApiError(404, "no such company found");
 
-  const version = (await redisConnection.get(`company:${company.id}:employees:version`)) || 1;
+  log.info("getEmployees.company.resolved", {
+    companyId: company.id,
+  });
+
+  const version =
+    (await redisConnection.get(`company:${company.id}:employees:version`)) || 1;
 
   const cacheKey = `company:${company.id}:employees:v${version}:filter:${search}:page:${page}:limit:${limit}`;
   const cached = await redisConnection.get(cacheKey);
+
   if (cached) {
+    log.info("getEmployees.cache.hit", {
+      companyId: company.id,
+      page,
+      limit,
+      search,
+    });
+
     return res.json(
       new ApiResponse(200, JSON.parse(cached), "employees list(cached)"),
     );
   }
+
+  log.info("getEmployees.cache.miss", {
+    companyId: company.id,
+    page,
+    limit,
+    search,
+  });
 
   const whereClause = {
     companyId: company.id,
@@ -823,12 +850,12 @@ const getEmployeesList = asyncHandler(async (req, res) => {
     }),
   };
 
-  const [employees,totalEmployees]=await prisma.$transaction([
+  const [employees, totalEmployees] = await prisma.$transaction([
     prisma.employee.findMany({
       where: whereClause,
-      skip:skip,
-      take:limit,
-      orderBy:{id:"desc"},
+      skip: skip,
+      take: limit,
+      orderBy: { id: "desc" },
       select: {
         id: true,
         user: {
@@ -842,11 +869,16 @@ const getEmployeesList = asyncHandler(async (req, res) => {
       },
     }),
 
-    prisma.employee.count({where:whereClause})
+    prisma.employee.count({ where: whereClause }),
+  ]);
 
-  ])
+  log.info("getEmployees.query.executed", {
+    companyId: company.id,
+    returnedCount: employees.length,
+    totalEmployees,
+  });
 
-  const responsePayLoad={
+  const responsePayLoad = {
     employees,
     pagination: {
       page,
@@ -854,20 +886,30 @@ const getEmployeesList = asyncHandler(async (req, res) => {
       totalEmployees,
       totalPages: Math.ceil(totalEmployees / limit),
       hasPrevPage: page > 1,
-      hasNextPage: skip+employees.length < totalEmployees,
+      hasNextPage: skip + employees.length < totalEmployees,
     },
-  }
+  };
 
-  await redisConnection.setex(cacheKey,60,JSON.stringify(responsePayLoad))
+  await redisConnection.setex(cacheKey, 60, JSON.stringify(responsePayLoad));
 
-  res.json(
-    new ApiResponse(
-      200,
-      responsePayLoad,
-      "employees list"
-    )
-  );
+  log.info("getEmployees.cache.set", {
+    companyId: company.id,
+    page,
+    limit,
+    ttl: 60,
+  });
+
+  log.info("request.success", {
+    action: "getEmployeesList",
+    companyId: company.id,
+    page,
+    limit,
+    returnedCount: employees.length,
+  });
+
+  res.json(new ApiResponse(200, responsePayLoad, "employees list"));
 });
+
 
 const getEmployeeDetail = asyncHandler(async (req, res) => {
   const { employeeId } = req.params;
