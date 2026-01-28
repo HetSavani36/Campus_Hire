@@ -856,24 +856,48 @@ const getJobsList = asyncHandler(async (req, res) => {
 
 
 const getJobDetail = asyncHandler(async (req, res) => {
+  log.info("request.start", {
+    action: "getJobDetail",
+    actorId: req.user.id,
+    role: req.user.role,
+    ip: req.ip,
+    jobId: req.params.jobId,
+  });
+
   const { jobId } = req.params;
   if (!jobId) throw new ApiError(403, "please provide job id");
 
   const student = await prisma.student.findUnique({
     where: { userId: req.user.id },
-    select:{collegeId:true}
+    select: { collegeId: true },
   });
   if (!student) throw new ApiError(404, "no such student found");
 
-  const version = (await redisConnection.get(`company:job:${jobId}:version`)) || 1;
+  log.info("student.resolved", {
+    collegeId: student.collegeId,
+  });
+
+  const version =
+    (await redisConnection.get(`company:job:${jobId}:version`)) || 1;
 
   const cacheKey = `company:job:${jobId}}:v${version}`;
   const cached = await redisConnection.get(cacheKey);
+
   if (cached) {
+    log.info("studentJob.cache.hit", {
+      jobId,
+      collegeId: student.collegeId,
+    });
+
     return res.json(
       new ApiResponse(200, JSON.parse(cached), "job requests(cached)"),
     );
   }
+
+  log.info("studentJob.cache.miss", {
+    jobId,
+    collegeId: student.collegeId,
+  });
 
   const job = await prisma.job.findUnique({
     where: { id: jobId },
@@ -908,25 +932,70 @@ const getJobDetail = asyncHandler(async (req, res) => {
       },
     },
   });
-  if (!job) throw new ApiError(404, "no such job found");
-  if (job.collegeId !== student.collegeId)
+
+  if (!job) {
+    log.warn("studentJob.not_found", {
+      jobId,
+    });
+
+    throw new ApiError(404, "no such job found");
+  }
+
+  if (job.collegeId !== student.collegeId) {
+    log.warn("studentJob.forbidden.college", {
+      jobId,
+      studentCollegeId: student.collegeId,
+      jobCollegeId: job.collegeId,
+    });
+
     throw new ApiError(403, "you cant apply to another college job");
-  if (job.status !== "active")
+  }
+
+  if (job.status !== "active") {
+    log.warn("studentJob.inactive", {
+      jobId,
+      status: job.status,
+    });
+
     throw new ApiError(403, "the job is currently not active");
-  if (job.isApproved === false)
+  }
+
+  if (job.isApproved === false) {
+    log.warn("studentJob.not_approved", {
+      jobId,
+    });
+
     throw new ApiError(403, "the job is not approved by your college yet");
-  if (!job.mentorId)
+  }
+
+  if (!job.mentorId) {
+    log.warn("studentJob.mentor.missing", {
+      jobId,
+    });
+
     throw new ApiError(403, "your college has not yet assigned a mentor");
+  }
 
   job.mentor = {
     name: job.mentor.user.name,
     email: job.mentor.user.email,
   };
 
-  await redisConnection.setex(cacheKey,60,JSON.stringify(job))
+  await redisConnection.setex(cacheKey, 60, JSON.stringify(job));
+
+  log.info("studentJob.cache.set", {
+    jobId,
+    ttl: 60,
+  });
+
+  log.info("request.success", {
+    action: "getJobDetail",
+    jobId,
+  });
 
   res.json(new ApiResponse(200, job, "job details"));
 });
+
 
 export {
   uploadBulkStudents,
