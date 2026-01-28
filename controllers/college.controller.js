@@ -12,34 +12,53 @@ const prisma = new PrismaClient();
 
 const createMentor = asyncHandler(async (req, res) => {
   const { name, email } = req.body;
-  if (!name || !email) throw new ApiError(403, "please provide all details");
+
+  if (!name || !email) {
+    log.info("createMentor validation failed", {
+      requestId: req.requestId,
+      userId: req.user.id,
+    });
+    throw new ApiError(403, "please provide all details");
+  }
+
+  log.info("createMentor request received", {
+    requestId: req.requestId,
+    userId: req.user.id,
+    mentorEmail: email,
+  });
 
   const college = await prisma.college.findUnique({
-    where: {
-      email: req.user.email,
+    where: { email: req.user.email },
+    select: {
+      id: true,
+      name: true,
     },
-    select:{
-      id:true,
-      name:true
-    }
   });
-  if(!college) throw new ApiError(404, "no such college found");
+
+  if (!college) {
+    log.error("createMentor college not found", {
+      requestId: req.requestId,
+      userId: req.user.id,
+    });
+    throw new ApiError(404, "no such college found");
+  }
 
   const password = generatePassword(8);
-  let mentor=null
-  
+  let mentor = null;
+
   try {
     await prisma.$transaction(async (tx) => {
       const hashedPassword = await hashPassword(password);
+
       const user = await tx.user.create({
         data: {
-          name: name,
-          email: email,
+          name,
+          email,
           password: hashedPassword,
           role: "mentor",
         },
       });
-  
+
       mentor = await tx.mentor.create({
         data: {
           userId: user.id,
@@ -69,104 +88,213 @@ const createMentor = asyncHandler(async (req, res) => {
       });
     });
   } catch (err) {
-    if (err.code === "P2002") throw new ApiError(409, "user/mentor already exists");
+    if (err.code === "P2002") {
+      log.info("createMentor duplicate user attempt", {
+        requestId: req.requestId,
+        mentorEmail: email,
+        collegeId: college.id,
+      });
+      throw new ApiError(409, "user/mentor already exists");
+    }
+
+    log.error("createMentor transaction failed", {
+      requestId: req.requestId,
+      mentorEmail: email,
+      error: err.message,
+    });
+
     throw new ApiError(500, "failed to create mentors");
   }
+
+  log.info("mentor created successfully", {
+    requestId: req.requestId,
+    mentorId: mentor.id,
+    mentorEmail: mentor.user.email,
+    collegeId: college.id,
+  });
 
   await emailQueue.add(
     "mentor-credentials",
     {
-      name: name,
-      email: email,
-      password: password,
+      name,
+      email,
+      password,
       collegeName: college.name,
     },
-    emailOptions
+    emailOptions,
   );
 
-  await redisConnection.incr(`college:${college.id}:mentors:version`)
+  log.info("mentor credentials email queued", {
+    requestId: req.requestId,
+    mentorEmail: email,
+  });
 
-  res.json(
-    new ApiResponse( 201, mentor, "mentor created successfully" )
-  );
+  await redisConnection.incr(`college:${college.id}:mentors:version`);
+
+  log.info("mentor cache invalidated", {
+    requestId: req.requestId,
+    collegeId: college.id,
+  });
+
+  res.json(new ApiResponse(201, mentor, "mentor created successfully"));
 });
+
 
 const collabDecision = asyncHandler(async (req, res) => {
   const { companyId } = req.params;
   const { result } = req.body;
-  if (!companyId || !result) throw new ApiError(403, "please provide all details");
-  if ( !["1","0"].includes(result)) throw new ApiError(403, "provide proper result value");
+
+  if (!companyId || !result) {
+    log.info("collabDecision validation failed", {
+      requestId: req.requestId,
+      userId: req.user.id,
+    });
+    throw new ApiError(403, "please provide all details");
+  }
+
+  if (!["1", "0"].includes(result)) {
+    log.info("collabDecision invalid result value", {
+      requestId: req.requestId,
+      result,
+    });
+    throw new ApiError(403, "provide proper result value");
+  }
+
+  const nextStatus = result === "1" ? "accepted" : "rejected";
+
+  log.info("collabDecision request received", {
+    requestId: req.requestId,
+    userId: req.user.id,
+    companyId,
+    decision: nextStatus,
+  });
 
   const college = await prisma.college.findUnique({
     where: { email: req.user.email },
-    select:{
-      id:true,
-      name:true
-    }
+    select: {
+      id: true,
+      name: true,
+    },
   });
-  if (!college) throw new ApiError(404, "no such college found");
 
-  const company = await prisma.company.findUnique({ 
-      where: { id: companyId } ,
-      select:{
-        name:true,
-        email:true
-      }
+  if (!college) {
+    log.error("collabDecision college not found", {
+      requestId: req.requestId,
+      userId: req.user.id,
     });
-  if (!company) throw new ApiError(404, "no such company found");
+    throw new ApiError(404, "no such college found");
+  }
 
-  const nextStatus=(result==="1")?"accepted":"rejected"
-  let occured=false
+  const company = await prisma.company.findUnique({
+    where: { id: companyId },
+    select: {
+      name: true,
+      email: true,
+    },
+  });
 
-  await prisma.$transaction(async(tx)=>{  
+  if (!company) {
+    log.error("collabDecision company not found", {
+      requestId: req.requestId,
+      companyId,
+    });
+    throw new ApiError(404, "no such company found");
+  }
+
+  let occured = false;
+
+  await prisma.$transaction(async (tx) => {
     const collabRequest = await tx.collab.findUnique({
       where: {
         collegeId_companyId: {
           collegeId: college.id,
-          companyId: companyId,
+          companyId,
         },
       },
-      select:{
-        id:true,
-        status:true
-      }
+      select: {
+        id: true,
+        status: true,
+      },
     });
-    if (!collabRequest) throw new ApiError(404, "no such collab request found");
-  
-    const currentStatus = collabRequest.status;
-    if(!canCollabTransition(currentStatus,nextStatus)) return 
 
-    const updated=await tx.collab.updateMany({
-      where: { id: collabRequest.id,status:currentStatus },
+    if (!collabRequest) {
+      log.info("collabDecision collab request not found", {
+        requestId: req.requestId,
+        collegeId: college.id,
+        companyId,
+      });
+      throw new ApiError(404, "no such collab request found");
+    }
+
+    const currentStatus = collabRequest.status;
+
+    if (!canCollabTransition(currentStatus, nextStatus)) {
+      log.info("collabDecision invalid state transition", {
+        requestId: req.requestId,
+        collabId: collabRequest.id,
+        from: currentStatus,
+        to: nextStatus,
+      });
+      return;
+    }
+
+    const updated = await tx.collab.updateMany({
+      where: {
+        id: collabRequest.id,
+        status: currentStatus,
+      },
       data: {
         status: nextStatus,
       },
     });
 
-    if(updated.count===1) occured=true
-  })
+    if (updated.count === 1) {
+      occured = true;
+    }
+  });
 
-  if(occured){
+  if (occured) {
+    log.info("collabDecision status updated", {
+      requestId: req.requestId,
+      collegeId: college.id,
+      companyId,
+      status: nextStatus,
+    });
+
     await emailQueue.add(
       "collab-decision",
       {
         companyName: company.name,
         collegeName: college.name,
         status: nextStatus,
-        companyEmail:company.email
+        companyEmail: company.email,
       },
-      emailOptions
+      emailOptions,
     );
+
+    log.info("collabDecision email queued", {
+      requestId: req.requestId,
+      companyEmail: company.email,
+      status: nextStatus,
+    });
+
     await redisConnection.incr(`company:${companyId}:version`);
     await redisConnection.incr(`colleges:version`);
     await redisConnection.incr(`college:${college.id}:collab:requests:version`);
-    await redisConnection.incr(`college:${college.id}:version`)
+    await redisConnection.incr(`college:${college.id}:version`);
+
+    log.info("collabDecision cache invalidated", {
+      requestId: req.requestId,
+      collegeId: college.id,
+      companyId,
+    });
   }
 
   res.json(
-    new ApiResponse(200, nextStatus, `the collab request is ${nextStatus}`)
+    new ApiResponse(200, nextStatus, `the collab request is ${nextStatus}`),
   );
 });
+
 
 const resetPassword = asyncHandler(async (req, res) => {
   const { userId } = req.params;
