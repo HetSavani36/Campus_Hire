@@ -969,38 +969,65 @@ const getMentorsList = asyncHandler(async (req, res) => {
 });
 
 
-
 const mentorDetails = asyncHandler(async (req, res) => {
   const { filter } = req.query;
   const { mentorId } = req.params;
+
+  log.info("mentorDetails request received", {
+    requestId: req.requestId,
+    adminId: req.user.id,
+    mentorId,
+    filter,
+  });
+
   if (!mentorId) throw new ApiError(403, "please provide mentor id");
 
   const college = await prisma.college.findUnique({
     where: { email: req.user.email },
-    select:{id:true}
+    select: { id: true },
   });
-  if (!college) throw new ApiError(404, "no such college found");
 
-  const version = (await redisConnection.get(`mentor:${mentorId}:version`)) || 1;
+  if (!college) {
+    log.error("mentorDetails college not found", {
+      requestId: req.requestId,
+      adminId: req.user.id,
+    });
+    throw new ApiError(404, "no such college found");
+  }
+
+  const version =
+    (await redisConnection.get(`mentor:${mentorId}:version`)) || 1;
 
   const cacheKey = `mentor:${mentorId}:v${version}:filter:${filter}`;
+
   const cached = await redisConnection.get(cacheKey);
   if (cached) {
+    log.info("mentorDetails cache hit", {
+      requestId: req.requestId,
+      mentorId,
+      cacheKey,
+    });
+
     return res.json(
-      new ApiResponse(
-        200,
-        JSON.parse(cached),
-        "mentor detail (cached)",
-      ),
+      new ApiResponse(200, JSON.parse(cached), "mentor detail (cached)"),
     );
   }
+
+  log.info("mentorDetails cache miss", {
+    requestId: req.requestId,
+    mentorId,
+    cacheKey,
+  });
 
   let whereClause = {
     collegeId: college.id,
     isApproved: true,
   };
+
   if (filter === "jobs_current") whereClause.dueDate = { gte: new Date() };
   if (filter === "jobs_past") whereClause.dueDate = { lt: new Date() };
+
+  const queryStart = Date.now();
 
   let mentor = await prisma.mentor.findUnique({
     where: { id: mentorId },
@@ -1023,12 +1050,35 @@ const mentorDetails = asyncHandler(async (req, res) => {
       },
     },
   });
-  if (!mentor) throw new ApiError(404, "no such employee found");
-  if (mentor.collegeId !== college.id)
+
+  log.info("mentorDetails DB query completed", {
+    requestId: req.requestId,
+    mentorId,
+    durationMs: Date.now() - queryStart,
+    jobsReturned: mentor?.jobs?.length ?? 0,
+  });
+
+  if (!mentor) {
+    log.warn("mentorDetails mentor not found", {
+      requestId: req.requestId,
+      mentorId,
+    });
+    throw new ApiError(404, "no such employee found");
+  }
+
+  if (mentor.collegeId !== college.id) {
+    log.warn("mentorDetails cross-college access blocked", {
+      requestId: req.requestId,
+      mentorId,
+      adminCollegeId: college.id,
+      mentorCollegeId: mentor.collegeId,
+    });
+
     throw new ApiError(
       403,
-      "you cant access mentor details of another college"
+      "you cant access mentor details of another college",
     );
+  }
 
   mentor = {
     name: mentor.user.name,
@@ -1039,10 +1089,18 @@ const mentorDetails = asyncHandler(async (req, res) => {
   mentor.collegeId = undefined;
   mentor.user = undefined;
 
-  await redisConnection.setex(cacheKey,30,JSON.stringify(mentor))
+  await redisConnection.setex(cacheKey, 30, JSON.stringify(mentor));
+
+  log.info("mentorDetails cache populated", {
+    requestId: req.requestId,
+    mentorId,
+    cacheKey,
+    ttl: 30,
+  });
 
   res.json(new ApiResponse(200, mentor, "mentor detail"));
 });
+
 
 const getAllCollabRequests = asyncHandler(async (req, res) => {
   const allowedStatus=["accepted","rejected","pending"]
