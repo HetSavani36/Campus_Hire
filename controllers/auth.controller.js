@@ -364,16 +364,37 @@ const login = asyncHandler(async (req, res) => {
 
 const logout = asyncHandler(async (req, res) => {
   let decoded;
+
+  log.info("logout request received", {
+    requestId: req.requestId,
+    ip: req.ip,
+    userAgent: req.headers["user-agent"],
+  });
+
   try {
     decoded = verifyRefreshToken(req.cookies.refreshToken);
   } catch (err) {
-    // ignore
+    log.warn("logout called with invalid or missing refresh token", {
+      requestId: req.requestId,
+      ip: req.ip,
+    });
+    // ignore (as per original logic)
   }
 
   if (decoded?.sessionId) {
-    await prisma.session.updateMany({
+    const result = await prisma.session.updateMany({
       where: { id: decoded.sessionId },
       data: { revokedAt: new Date() },
+    });
+
+    log.info("logout session revoked", {
+      requestId: req.requestId,
+      sessionId: decoded.sessionId,
+      affectedRows: result.count,
+    });
+  } else {
+    log.info("logout completed without active session", {
+      requestId: req.requestId,
     });
   }
 
@@ -381,7 +402,12 @@ const logout = asyncHandler(async (req, res) => {
     .clearCookie("accessToken", options)
     .clearCookie("refreshToken", options)
     .json(new ApiResponse(200, {}, "user logout successfully"));
+
+  log.info("logout completed successfully", {
+    requestId: req.requestId,
+  });
 });
+
 
 const refreshController = asyncHandler(async (req, res) => {
   const incomingRefreshToken = req.cookies?.refreshToken;
