@@ -140,41 +140,106 @@ const registerCollege = asyncHandler(async (req, res) => {
 
 
 const registerCompany = asyncHandler(async (req, res) => {
-  const { name, address, email, password, confirmPassword, registrationNo, contactNo, } = req.body;
-  if ( !name || !address || !email || !password || !confirmPassword || !contactNo || !registrationNo ) throw new ApiError(403, "provide all fields");
-  if (password !== confirmPassword) throw new ApiError(403, "password and confirm password must be same");
-  if (address.length < 2) throw new ApiError(403, "address must be greater than 1 characters");
-  if (name.length < 2) throw new ApiError(403, "name must be greater than 1 characters");
+  log.info("registerCompany request received", {
+    requestId: req.requestId,
+    email: req.body?.email,
+    ip: req.ip,
+  });
 
-  let company=null
-  let companyAdmin=null
+  const {
+    name,
+    address,
+    email,
+    password,
+    confirmPassword,
+    registrationNo,
+    contactNo,
+  } = req.body;
+
+  if (
+    !name ||
+    !address ||
+    !email ||
+    !password ||
+    !confirmPassword ||
+    !contactNo ||
+    !registrationNo
+  ) {
+    log.warn("registerCompany validation failed: missing fields", {
+      requestId: req.requestId,
+      email,
+    });
+    throw new ApiError(403, "provide all fields");
+  }
+
+  if (password !== confirmPassword) {
+    log.warn("registerCompany password mismatch", {
+      requestId: req.requestId,
+      email,
+    });
+    throw new ApiError(403, "password and confirm password must be same");
+  }
+
+  if (address.length < 2 || name.length < 2) {
+    log.warn("registerCompany validation failed: name/address too short", {
+      requestId: req.requestId,
+      email,
+    });
+    throw new ApiError(403, "invalid name or address length");
+  }
+
+  let company = null;
+  let companyAdmin = null;
 
   try {
-    await prisma.$transaction(async(tx)=>{
-      company = await tx.company.create({
-          data: {
-            name: name.toUpperCase(),
-            registrationNo: registrationNo,
-            address: address,
-            email: email,
-            contactNo: contactNo,
-          },
-        });
-      })
+    const txStart = Date.now();
 
-      const hashedPassword = await hashPassword(password);
-      companyAdmin=await tx.user.create({
+    await prisma.$transaction(async (tx) => {
+      company = await tx.company.create({
         data: {
           name: name.toUpperCase(),
+          registrationNo: registrationNo,
+          address: address,
           email: email,
-          password: hashedPassword,
-          role: "companyAdmin",
+          contactNo: contactNo,
         },
-      })
-      companyAdmin.password = undefined;
-  } 
-  catch (err) {
-    if (err.code === "P2002") throw new ApiError(409, "email is already registered");
+      });
+    });
+
+    const hashedPassword = await hashPassword(password);
+
+    companyAdmin = await tx.user.create({
+      data: {
+        name: name.toUpperCase(),
+        email: email,
+        password: hashedPassword,
+        role: "companyAdmin",
+      },
+    });
+
+    companyAdmin.password = undefined;
+
+    log.info("registerCompany DB transaction completed", {
+      requestId: req.requestId,
+      companyId: company.id,
+      adminId: companyAdmin.id,
+      durationMs: Date.now() - txStart,
+    });
+  } catch (err) {
+    if (err.code === "P2002") {
+      log.warn("registerCompany duplicate email attempt", {
+        requestId: req.requestId,
+        email,
+      });
+      throw new ApiError(409, "email is already registered");
+    }
+
+    log.error("registerCompany failed", {
+      requestId: req.requestId,
+      email,
+      error: err.message,
+    });
+
     throw new ApiError(409, err);
   }
 
@@ -184,17 +249,30 @@ const registerCompany = asyncHandler(async (req, res) => {
       name: company.name,
       email: company.email,
     },
-    emailOptions
+    emailOptions,
   );
+
+  log.info("registerCompany email queued", {
+    requestId: req.requestId,
+    companyId: company.id,
+    email: company.email,
+  });
 
   res.json(
     new ApiResponse(
       201,
-      { company:company, admin:companyAdmin },
-      "company registered successfully"
-    )
+      { company: company, admin: companyAdmin },
+      "company registered successfully",
+    ),
   );
+
+  log.info("registerCompany completed successfully", {
+    requestId: req.requestId,
+    companyId: company.id,
+    adminId: companyAdmin.id,
+  });
 });
+
 
 const login = asyncHandler(async (req, res) => {
   const { email, password } = req.body;
