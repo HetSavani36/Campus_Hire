@@ -1432,16 +1432,38 @@ const getAllJobs = asyncHandler(async (req, res) => {
 
 
 const getAllSkills = asyncHandler(async (req, res) => {
+  log.info("request.start", {
+    action: "getAllSkills",
+    actorId: req.user.id,
+    role: req.user.role,
+    ip: req.ip,
+  });
+
   const { search, sortBy = "name", sortOrder = "desc" } = req.query;
+
   const version = (await redisConnection.get(`company:skills:version`)) || 1;
 
   const cacheKey = `company:skills:v${version}:filter:${search}:sortBy:${sortBy}:sortOrder:${sortOrder}`;
   const cached = await redisConnection.get(cacheKey);
+
   if (cached) {
+    log.info("getSkills.cache.hit", {
+      search,
+      sortBy,
+      sortOrder,
+    });
+
     return res.json(
       new ApiResponse(200, JSON.parse(cached), "all skills(cached)"),
     );
   }
+
+  log.info("getSkills.cache.miss", {
+    search,
+    sortBy,
+    sortOrder,
+  });
+
   const skills = await prisma.skill.findMany({
     where: {
       name: { contains: search, mode: "insensitive" },
@@ -1451,10 +1473,30 @@ const getAllSkills = asyncHandler(async (req, res) => {
     },
   });
 
-  await redisConnection.setex(cacheKey,60,JSON.stringify(skills))
+  log.info("getSkills.query.executed", {
+    returnedCount: skills.length,
+    search,
+    sortBy,
+    sortOrder,
+  });
+
+  await redisConnection.setex(cacheKey, 60, JSON.stringify(skills));
+
+  log.info("getSkills.cache.set", {
+    ttl: 60,
+    search,
+    sortBy,
+    sortOrder,
+  });
+
+  log.info("request.success", {
+    action: "getAllSkills",
+    returnedCount: skills.length,
+  });
 
   res.json(new ApiResponse(200, skills, "all skills"));
 });
+
 
 const getJobDetails = asyncHandler(async (req, res) => {
   const { jobId } = req.params;
