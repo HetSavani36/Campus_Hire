@@ -8,6 +8,7 @@ import { canJobTransition } from "../domain/jobStateMachine.js";
 import { canCollabTransition } from "../domain/collabStateMachine.js";
 import { getPagination } from "../utils/pagination.js";
 import { redisConnection } from "../config/redis.js";
+import { log } from "../utils/logger.js";
 const prisma = new PrismaClient();
 
 const createMentor = asyncHandler(async (req, res) => {
@@ -1225,20 +1226,38 @@ const getAllCollabRequests = asyncHandler(async (req, res) => {
 const getCompanyDetails = asyncHandler(async (req, res) => {
   const { companyId } = req.params;
   if (!companyId) throw new ApiError(403, "please provide company id");
-  
-  const version = (await redisConnection.get(`company:${companyId}:version`)) || 1;
+
+  log.info("getCompanyDetails request received", {
+    requestId: req.requestId,
+    companyId,
+    requesterId: req.user?.id,
+  });
+
+  const version =
+    (await redisConnection.get(`company:${companyId}:version`)) || 1;
 
   const cacheKey = `company:${companyId}:v${version}`;
+
   const cached = await redisConnection.get(cacheKey);
   if (cached) {
+    log.info("getCompanyDetails cache hit", {
+      requestId: req.requestId,
+      companyId,
+      cacheKey,
+    });
+
     return res.json(
-      new ApiResponse(
-        200,
-        JSON.parse(cached),
-        "company details(cached)",
-      ),
+      new ApiResponse(200, JSON.parse(cached), "company details(cached)"),
     );
   }
+
+  log.info("getCompanyDetails cache miss", {
+    requestId: req.requestId,
+    companyId,
+    cacheKey,
+  });
+
+  const dbStart = Date.now();
 
   const company = await prisma.company.findUnique({
     where: { id: companyId },
@@ -1254,8 +1273,20 @@ const getCompanyDetails = asyncHandler(async (req, res) => {
       },
     },
   });
-  if (!company) throw new ApiError(403, "no such company found");
 
+  log.info("getCompanyDetails DB query completed", {
+    requestId: req.requestId,
+    companyId,
+    durationMs: Date.now() - dbStart,
+  });
+
+  if (!company) {
+    log.warn("getCompanyDetails company not found", {
+      requestId: req.requestId,
+      companyId,
+    });
+    throw new ApiError(403, "no such company found");
+  }
 
   const formattedCompany = {
     id: company.id,
@@ -1266,10 +1297,18 @@ const getCompanyDetails = asyncHandler(async (req, res) => {
     collaboratedCount: company.collabs.length,
   };
 
-  await redisConnection.setex(cacheKey,120,JSON.stringify(formattedCompany))
+  await redisConnection.setex(cacheKey, 120, JSON.stringify(formattedCompany));
+
+  log.info("getCompanyDetails cache populated", {
+    requestId: req.requestId,
+    companyId,
+    cacheKey,
+    ttl: 120,
+  });
 
   res.json(new ApiResponse(200, formattedCompany, "company details"));
 });
+
 
 const getAllJobRequests = asyncHandler(async (req, res) => {
   let { filter = "PENDING" } = req.query;
