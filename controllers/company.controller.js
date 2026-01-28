@@ -1499,24 +1499,48 @@ const getAllSkills = asyncHandler(async (req, res) => {
 
 
 const getJobDetails = asyncHandler(async (req, res) => {
+  log.info("request.start", {
+    action: "getJobDetails",
+    actorId: req.user.id,
+    role: req.user.role,
+    ip: req.ip,
+    jobId: req.params.jobId,
+  });
+
   const { jobId } = req.params;
   if (!jobId) throw new ApiError(403, "please provide job id");
 
   const company = await prisma.company.findUnique({
     where: { email: req.user.email },
-    select:{id:true}
+    select: { id: true },
   });
   if (!company) throw new ApiError(404, "no such company found");
 
-  const version = (await redisConnection.get(`company:job:${jobId}:version`)) || 1;
+  log.info("getJob.company.resolved", {
+    companyId: company.id,
+  });
+
+  const version =
+    (await redisConnection.get(`company:job:${jobId}:version`)) || 1;
 
   const cacheKey = `company:job:${jobId}:v${version}`;
   const cached = await redisConnection.get(cacheKey);
+
   if (cached) {
+    log.info("getJob.cache.hit", {
+      jobId,
+      companyId: company.id,
+    });
+
     return res.json(
       new ApiResponse(200, JSON.parse(cached), "job details(cached)"),
     );
   }
+
+  log.info("getJob.cache.miss", {
+    jobId,
+    companyId: company.id,
+  });
 
   const job = await prisma.job.findUnique({
     where: { id: jobId },
@@ -1561,28 +1585,43 @@ const getJobDetails = asyncHandler(async (req, res) => {
       },
     },
   });
-  if (!job) throw new ApiError(404, "no such job found");
-  if (job.companyId !== company.id)
+
+  if (!job) {
+    log.warn("getJob.not_found", {
+      jobId,
+    });
+
+    throw new ApiError(404, "no such job found");
+  }
+
+  if (job.companyId !== company.id) {
+    log.warn("getJob.forbidden", {
+      jobId,
+      companyId: company.id,
+      jobCompanyId: job.companyId,
+    });
+
     throw new ApiError(403, "job not belongs to your company");
+  }
 
   const shortlistedCandidates = job.applications.filter(
-    (application) => application.status === "shortlisted"
+    (application) => application.status === "shortlisted",
   );
   const rejectedCandidates = job.applications.filter(
-    (application) => application.status === "rejected"
+    (application) => application.status === "rejected",
   );
   const hiredCandidates = job.applications.filter(
-    (application) => application.status === "hired"
+    (application) => application.status === "hired",
   );
   const pendingCandidates = job.applications.filter(
-    (application) => application.status === "pending"
+    (application) => application.status === "pending",
   );
 
   job.applications = {
-    shortlistedCandidates: shortlistedCandidates,
-    rejectedCandidates: rejectedCandidates,
-    hiredCandidates: hiredCandidates,
-    pendingCandidates: pendingCandidates,
+    shortlistedCandidates,
+    rejectedCandidates,
+    hiredCandidates,
+    pendingCandidates,
   };
 
   const applicationCount = {
@@ -1598,10 +1637,30 @@ const getJobDetails = asyncHandler(async (req, res) => {
     applicationCount.hired +
     applicationCount.pending;
 
-  await redisConnection.setex(cacheKey,60,JSON.stringify({...job,applicationCount}))
+  log.info("getJob.applications.aggregated", {
+    jobId,
+    applicationCount,
+  });
+
+  await redisConnection.setex(
+    cacheKey,
+    60,
+    JSON.stringify({ ...job, applicationCount }),
+  );
+
+  log.info("getJob.cache.set", {
+    jobId,
+    ttl: 60,
+  });
+
+  log.info("request.success", {
+    action: "getJobDetails",
+    jobId,
+  });
 
   res.json(new ApiResponse(200, { ...job, applicationCount }, "job details"));
 });
+
 
 const exportEmployees = asyncHandler(async (req, res) => {
   const company = await prisma.company.findUnique({
