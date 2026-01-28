@@ -11,17 +11,34 @@ import { redisConnection } from "../config/redis.js";
 const prisma = new PrismaClient();
 
 const uploadBulkStudents = asyncHandler(async (req, res) => {
+  log.info("request.start", {
+    action: "uploadBulkStudents",
+    actorId: req.user.id,
+    role: req.user.role,
+    ip: req.ip,
+  });
+
   if (!req.file) throw new ApiError(400, "CSV file is required");
-  
+
   const college = await prisma.college.findUnique({
     where: { email: req.user.email },
-    select:{id:true}
+    select: { id: true },
   });
   if (!college) throw new ApiError(404, "College not found");
 
+  log.info("bulkStudents.college.resolved", {
+    collegeId: college.id,
+  });
+
   const rows = await parseFileBuffer(req.file.buffer, req.file.originalname);
-  if (!rows || rows.length === 0) throw new ApiError(400, "CSV file is empty or invalid");
-  
+  if (!rows || rows.length === 0)
+    throw new ApiError(400, "CSV file is empty or invalid");
+
+  log.info("bulkStudents.file.parsed", {
+    totalRows: rows.length,
+    filename: req.file.originalname,
+  });
+
   const createdStudents = [];
   const skippedStudents = [];
 
@@ -31,12 +48,18 @@ const uploadBulkStudents = asyncHandler(async (req, res) => {
         email: row.email || null,
         reason: "Missing required fields",
       });
+
+      log.info("bulkStudents.row.skipped", {
+        reason: "missing_fields",
+        email: row.email || null,
+      });
+
       continue;
     }
-    
+
     const password = generatePassword(8);
     const hashedPassword = await hashPassword(password);
-  
+
     try {
       const user = await prisma.user.create({
         data: {
@@ -62,16 +85,32 @@ const uploadBulkStudents = asyncHandler(async (req, res) => {
         password,
         rollNo: row.rollNo || null,
       });
+
+      log.info("bulkStudents.student.created", {
+        userId: user.id,
+        email: user.email,
+      });
     } catch (err) {
-        if (err.code === "P2002") {
-          skippedStudents.push({
-            email: row.email,
-            reason: "User already exists",
-          });
-          continue
-        }
-        throw new ApiError(500, "failed to create student");
-    }      
+      if (err.code === "P2002") {
+        skippedStudents.push({
+          email: row.email,
+          reason: "User already exists",
+        });
+
+        log.info("bulkStudents.student.skipped", {
+          email: row.email,
+          reason: "already_exists",
+        });
+
+        continue;
+      }
+
+      log.warn("bulkStudents.student.create_failed", {
+        email: row.email,
+      });
+
+      throw new ApiError(500, "failed to create student");
+    }
   }
 
   for (const student of createdStudents) {
@@ -81,11 +120,21 @@ const uploadBulkStudents = asyncHandler(async (req, res) => {
         email: student.email,
         password: student.password,
         name: student.name,
-        rollNo:student.rollNo
+        rollNo: student.rollNo,
       },
-      emailOptions
+      emailOptions,
     );
+
+    log.info("bulkStudents.email.queued", {
+      email: student.email,
+    });
   }
+
+  log.info("request.success", {
+    action: "uploadBulkStudents",
+    createdCount: createdStudents.length,
+    skippedCount: skippedStudents.length,
+  });
 
   return res.json(
     new ApiResponse(
@@ -95,10 +144,11 @@ const uploadBulkStudents = asyncHandler(async (req, res) => {
         skippedCount: skippedStudents.length,
         skippedStudents,
       },
-      "Bulk student upload completed successfully"
-    )
+      "Bulk student upload completed successfully",
+    ),
   );
 });
+
 
 const createProfile = asyncHandler(async (req, res) => {
   const { year, aboutMe, branch } = req.body;
