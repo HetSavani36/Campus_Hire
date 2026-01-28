@@ -910,25 +910,48 @@ const getEmployeesList = asyncHandler(async (req, res) => {
   res.json(new ApiResponse(200, responsePayLoad, "employees list"));
 });
 
-
 const getEmployeeDetail = asyncHandler(async (req, res) => {
+  log.info("request.start", {
+    action: "getEmployeeDetail",
+    actorId: req.user.id,
+    role: req.user.role,
+    ip: req.ip,
+    employeeId: req.params.employeeId,
+  });
+
   const { employeeId } = req.params;
 
   const company = await prisma.company.findUnique({
     where: { email: req.user.email },
-    select:{id:true}
+    select: { id: true },
   });
   if (!company) throw new ApiError(404, "no such company found");
 
-  const version = (await redisConnection.get(`employee:${employeeId}:version`)) || 1;
+  log.info("getEmployee.company.resolved", {
+    companyId: company.id,
+  });
+
+  const version =
+    (await redisConnection.get(`employee:${employeeId}:version`)) || 1;
 
   const cacheKey = `employee:${employeeId}}:v${version}`;
   const cached = await redisConnection.get(cacheKey);
+
   if (cached) {
+    log.info("getEmployee.cache.hit", {
+      employeeId,
+      companyId: company.id,
+    });
+
     return res.json(
       new ApiResponse(200, JSON.parse(cached), "employee details(cached)"),
     );
   }
+
+  log.info("getEmployee.cache.miss", {
+    employeeId,
+    companyId: company.id,
+  });
 
   const employee = await prisma.employee.findUnique({
     where: { id: employeeId },
@@ -968,13 +991,34 @@ const getEmployeeDetail = asyncHandler(async (req, res) => {
       },
     },
   });
-  if (!employee) throw new ApiError(404, "no such employee found");
-  if (employee.companyId !== company.id) throw new ApiError(403, "you cant see employee of another company");
 
-  await redisConnection.setex(cacheKey,120,JSON.stringify(employee))
+  if (!employee) throw new ApiError(404, "no such employee found");
+
+  if (employee.companyId !== company.id) {
+    log.warn("getEmployee.forbidden", {
+      employeeId,
+      companyId: company.id,
+      employeeCompanyId: employee.companyId,
+    });
+
+    throw new ApiError(403, "you cant see employee of another company");
+  }
+
+  await redisConnection.setex(cacheKey, 120, JSON.stringify(employee));
+
+  log.info("getEmployee.cache.set", {
+    employeeId,
+    ttl: 120,
+  });
+
+  log.info("request.success", {
+    action: "getEmployeeDetail",
+    employeeId,
+  });
 
   res.json(new ApiResponse(200, employee, "employee details"));
 });
+
 
 const getAllColleges = asyncHandler(async (req, res) => {
   let { filter = "all" } = req.query;
