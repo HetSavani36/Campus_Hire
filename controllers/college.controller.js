@@ -799,41 +799,67 @@ const assignMentor = asyncHandler(async (req, res) => {
 });
 
 
-
 const getMentorsList = asyncHandler(async (req, res) => {
   const { filter = "all" } = req.query;
   const { page, limit, skip } = getPagination(req.query);
+
+  log.info("getMentorsList request received", {
+    requestId: req.requestId,
+    adminId: req.user.id,
+    filter,
+    page,
+    limit,
+  });
 
   const college = await prisma.college.findUnique({
     where: { email: req.user.email },
     select: { id: true },
   });
-  if (!college) throw new ApiError(404, "no such college found");
 
-  const version=( await redisConnection.get(`college:${college.id}:mentors:version`) ) || 1
+  if (!college) {
+    log.error("getMentorsList college not found", {
+      requestId: req.requestId,
+      adminId: req.user.id,
+    });
+    throw new ApiError(404, "no such college found");
+  }
 
-  const cacheKey=`college:${college.id}:mentors:v${version}:filter:${filter}:page:${page}:limit:${limit}`
-  const cached=await redisConnection.get(cacheKey)
-  if(cached){
+  const version =
+    (await redisConnection.get(`college:${college.id}:mentors:version`)) || 1;
+
+  const cacheKey = `college:${college.id}:mentors:v${version}:filter:${filter}:page:${page}:limit:${limit}`;
+
+  const cached = await redisConnection.get(cacheKey);
+  if (cached) {
+    log.info("getMentorsList cache hit", {
+      requestId: req.requestId,
+      collegeId: college.id,
+      cacheKey,
+    });
+
     return res.json(
       new ApiResponse(
         200,
         JSON.parse(cached),
-        "mentors fetched successfully(cached)",
+        "mentors fetched successfully (cached)",
       ),
     );
   }
 
+  log.info("getMentorsList cache miss", {
+    requestId: req.requestId,
+    collegeId: college.id,
+    cacheKey,
+  });
+
   const now = new Date();
 
-  // Common job condition used in filters
   const activeJobCondition = {
     isApproved: true,
     status: "active",
     mentorId: { not: null },
   };
 
-  // Build mentor WHERE clause (THIS IS THE KEY FIX)
   const mentorWhere = {
     collegeId: college.id,
   };
@@ -865,12 +891,14 @@ const getMentorsList = asyncHandler(async (req, res) => {
     };
   }
 
+  const queryStart = Date.now();
+
   const [mentors, totalMentors] = await prisma.$transaction([
     prisma.mentor.findMany({
       where: mentorWhere,
       skip,
       take: limit,
-      orderBy: { id:"desc" },
+      orderBy: { id: "desc" },
       select: {
         id: true,
         user: {
@@ -893,11 +921,18 @@ const getMentorsList = asyncHandler(async (req, res) => {
         },
       },
     }),
-
     prisma.mentor.count({
       where: mentorWhere,
     }),
   ]);
+
+  log.info("getMentorsList DB query completed", {
+    requestId: req.requestId,
+    collegeId: college.id,
+    durationMs: Date.now() - queryStart,
+    returnedMentors: mentors.length,
+    totalMentors,
+  });
 
   const formattedMentors = mentors.map((mentor) => ({
     id: mentor.id,
@@ -919,16 +954,20 @@ const getMentorsList = asyncHandler(async (req, res) => {
     },
   };
 
-  await redisConnection.setex(cacheKey,60,JSON.stringify(responsePayLoad))
+  await redisConnection.setex(cacheKey, 60, JSON.stringify(responsePayLoad));
+
+  log.info("getMentorsList cache populated", {
+    requestId: req.requestId,
+    collegeId: college.id,
+    cacheKey,
+    ttl: 60,
+  });
 
   res.json(
-    new ApiResponse(
-      200,
-      responsePayLoad,
-      "mentors fetched successfully"
-    )
+    new ApiResponse(200, responsePayLoad, "mentors fetched successfully"),
   );
 });
+
 
 
 const mentorDetails = asyncHandler(async (req, res) => {
