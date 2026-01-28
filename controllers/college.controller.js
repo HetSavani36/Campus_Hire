@@ -1635,11 +1635,30 @@ const getJobDetails = asyncHandler(async (req, res) => {
 
 
 const exportMentors = asyncHandler(async (req, res) => {
+  log.info("exportMentors request received", {
+    requestId: req.requestId,
+    requesterId: req.user?.id,
+  });
+
   const college = await prisma.college.findUnique({
     where: { email: req.user.email },
     select: { id: true },
   });
-  if (!college) throw new ApiError(404, "no such college found");
+
+  if (!college) {
+    log.warn("exportMentors college not found", {
+      requestId: req.requestId,
+      email: req.user.email,
+    });
+    throw new ApiError(404, "no such college found");
+  }
+
+  log.info("exportMentors college resolved", {
+    requestId: req.requestId,
+    collegeId: college.id,
+  });
+
+  const dbStart = Date.now();
 
   const mentors = await prisma.mentor.findMany({
     where: { collegeId: college.id },
@@ -1655,24 +1674,43 @@ const exportMentors = asyncHandler(async (req, res) => {
     },
   });
 
+  log.info("exportMentors DB query completed", {
+    requestId: req.requestId,
+    collegeId: college.id,
+    mentorCount: mentors.length,
+    durationMs: Date.now() - dbStart,
+  });
+
   const data = [
     ["ID", "NAME", "EMAIL", "HIRE DATE"],
     ...mentors.map((e) => [
       e.id,
       e.user.name,
       e.user.email,
-      e.user.createdAt.toISOString(), // IMPORTANT
+      e.user.createdAt.toISOString(),
     ]),
   ];
 
   const csv = data.map((row) => row.join(",")).join("\n");
+
+  log.info("exportMentors CSV generated", {
+    requestId: req.requestId,
+    rows: data.length - 1, // excluding header
+    fileSizeBytes: Buffer.byteLength(csv, "utf8"),
+  });
 
   res
     .setHeader("Content-Type", "text/csv; charset=utf-8")
     .setHeader("Content-Disposition", "attachment; filename=mentors.csv")
     .setHeader("Cache-Control", "no-store")
     .send("\uFEFF" + csv);
+
+  log.info("exportMentors response sent", {
+    requestId: req.requestId,
+    collegeId: college.id,
+  });
 });
+
 
 export {
   createMentor,
