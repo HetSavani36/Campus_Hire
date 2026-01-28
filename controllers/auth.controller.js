@@ -277,50 +277,90 @@ const registerCompany = asyncHandler(async (req, res) => {
 const login = asyncHandler(async (req, res) => {
   const { email, password } = req.body;
 
-  if (!email || !password) throw new ApiError(403, "please provide all details");
+  log.info("login request received", {
+    requestId: req.requestId,
+    email,
+    ip: req.ip,
+    userAgent: req.headers["user-agent"],
+  });
+
+  if (!email || !password) {
+    log.warn("login validation failed: missing credentials", {
+      requestId: req.requestId,
+      email,
+    });
+    throw new ApiError(403, "please provide all details");
+  }
 
   const user = await prisma.user.findUnique({ where: { email: email } });
-  if (!user) throw new ApiError(404, "no such user found");
+  if (!user) {
+    log.warn("login failed: user not found", {
+      requestId: req.requestId,
+      email,
+    });
+    throw new ApiError(404, "no such user found");
+  }
 
   const isPasswordCorrect = await comparePassword(password, user.password);
-  if (!isPasswordCorrect) throw new ApiError(403, "incorrect password");
-  
+  if (!isPasswordCorrect) {
+    log.warn("login failed: incorrect password", {
+      requestId: req.requestId,
+      userId: user.id,
+      email,
+    });
+    throw new ApiError(403, "incorrect password");
+  }
+
+  const sessionStart = Date.now();
+
   const session = await prisma.session.create({
     data: {
       userId: user.id,
       userAgent: req.headers["user-agent"],
       ip: req.ip,
-      expiresAt: new Date(Date.now() + 7*24*60*60*1000),
+      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
     },
   });
-  
-  const refreshToken=generateRefreshToken(
-    {
-      userId:user.id,
-      sessionId:session.id
-    }
-  )
-  
-  const refreshTokenHash=crypto
+
+  const refreshToken = generateRefreshToken({
+    userId: user.id,
+    sessionId: session.id,
+  });
+
+  const refreshTokenHash = crypto
     .createHash("sha256")
     .update(refreshToken)
-    .digest("hex")
+    .digest("hex");
 
   await prisma.session.update({
-    where:{id:session.id},
-    data:{
-      refreshTokenHash:refreshTokenHash
-    }
-  })
+    where: { id: session.id },
+    data: {
+      refreshTokenHash: refreshTokenHash,
+    },
+  });
 
-  user.password = undefined;  
+  log.info("login session created", {
+    requestId: req.requestId,
+    userId: user.id,
+    sessionId: session.id,
+    durationMs: Date.now() - sessionStart,
+  });
+
+  user.password = undefined;
   const accessToken = generateAccessToken(user);
 
   res
     .cookie("accessToken", accessToken, options)
     .cookie("refreshToken", refreshToken, options)
-    .json(new ApiResponse(200, user, `${user.role} logged in  successfully`));
+    .json(new ApiResponse(200, user, `${user.role} logged in successfully`));
+
+  log.info("login completed successfully", {
+    requestId: req.requestId,
+    userId: user.id,
+    role: user.role,
+  });
 });
+
 
 const logout = asyncHandler(async (req, res) => {
   let decoded;
