@@ -1663,11 +1663,22 @@ const getJobDetails = asyncHandler(async (req, res) => {
 
 
 const exportEmployees = asyncHandler(async (req, res) => {
+  log.info("request.start", {
+    action: "exportEmployees",
+    actorId: req.user.id,
+    role: req.user.role,
+    ip: req.ip,
+  });
+
   const company = await prisma.company.findUnique({
     where: { email: req.user.email },
-    select:{id:true}
+    select: { id: true },
   });
   if (!company) throw new ApiError(404, "no such company found");
+
+  log.info("exportEmployees.company.resolved", {
+    companyId: company.id,
+  });
 
   const employees = await prisma.employee.findMany({
     where: { companyId: company.id },
@@ -1683,6 +1694,11 @@ const exportEmployees = asyncHandler(async (req, res) => {
     },
   });
 
+  log.info("exportEmployees.query.executed", {
+    companyId: company.id,
+    totalEmployees: employees.length,
+  });
+
   const data = [
     ["ID", "NAME", "EMAIL", "HIRE DATE"],
     ...employees.map((e) => [
@@ -1695,12 +1711,23 @@ const exportEmployees = asyncHandler(async (req, res) => {
 
   const csv = data.map((row) => row.join(",")).join("\n");
 
+  log.info("exportEmployees.csv.generated", {
+    companyId: company.id,
+    rows: data.length - 1,
+  });
+
+  log.info("request.success", {
+    action: "exportEmployees",
+    companyId: company.id,
+  });
+
   res
     .setHeader("Content-Type", "text/csv; charset=utf-8")
     .setHeader("Content-Disposition", "attachment; filename=employees.csv")
     .setHeader("Cache-Control", "no-store")
     .send("\uFEFF" + csv);
 });
+
 
 export {
   createEmployee,
