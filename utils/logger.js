@@ -5,4 +5,7 @@ export const log = {
   error: (msg, meta = {}) => {
     console.error(JSON.stringify({ level: "error", message: msg, ...meta }));
   },
+  warn: (msg, meta = {}) => {
+    console.warn(JSON.stringify({ level: "warn", message: msg, ...meta }));
+  },
 };
