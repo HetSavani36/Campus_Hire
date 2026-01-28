@@ -1314,25 +1314,50 @@ const getAllJobRequests = asyncHandler(async (req, res) => {
   let { filter = "PENDING" } = req.query;
   const { page, limit, skip } = getPagination(req.query);
 
+  log.info("getAllJobRequests request received", {
+    requestId: req.requestId,
+    filter,
+    page,
+    limit,
+    requesterId: req.user?.id,
+  });
+
   const college = await prisma.college.findUnique({
     where: { email: req.user.email },
     select: { id: true },
   });
-  if (!college) throw new ApiError(404, "no such college found");
+  if (!college) {
+    log.warn("getAllJobRequests college not found", {
+      requestId: req.requestId,
+      email: req.user.email,
+    });
+    throw new ApiError(404, "no such college found");
+  }
 
-  const version = (await redisConnection.get(`college:${college.id}:job:requests:version`)) || 1;
+  const version =
+    (await redisConnection.get(`college:${college.id}:job:requests:version`)) ||
+    1;
 
   const cacheKey = `college:${college.id}:job:requests:v${version}:filter:${filter}:page:${page}:limit:${limit}`;
+
   const cached = await redisConnection.get(cacheKey);
   if (cached) {
+    log.info("getAllJobRequests cache hit", {
+      requestId: req.requestId,
+      collegeId: college.id,
+      cacheKey,
+    });
+
     return res.json(
-      new ApiResponse(
-        200,
-        JSON.parse(cached),
-        "job requests(cached)",
-      ),
+      new ApiResponse(200, JSON.parse(cached), "job requests(cached)"),
     );
   }
+
+  log.info("getAllJobRequests cache miss", {
+    requestId: req.requestId,
+    collegeId: college.id,
+    cacheKey,
+  });
 
   const startOfToday = new Date();
   startOfToday.setHours(0, 0, 0, 0);
@@ -1345,35 +1370,34 @@ const getAllJobRequests = asyncHandler(async (req, res) => {
   if (filter === "PENDING") {
     whereClause.isApproved = false;
     whereClause.dueDate = { gte: startOfToday };
-  }
-
-  else if (filter === "CURRENT") {
+  } else if (filter === "CURRENT") {
     whereClause.isApproved = true;
     whereClause.dueDate = { gte: startOfToday };
     whereClause.mentor = { isNot: null };
-  }
-
-  else if (filter === "PAST") {
+  } else if (filter === "PAST") {
     whereClause.isApproved = true;
     whereClause.dueDate = { lt: startOfToday };
     whereClause.mentor = { isNot: null };
-  }
-
-  else if (filter === "ASSIGN_MENTOR") {
+  } else if (filter === "ASSIGN_MENTOR") {
     whereClause.isApproved = true;
     whereClause.dueDate = { gte: startOfToday };
     whereClause.mentor = { is: null };
-  }
-  else {
+  } else {
+    log.warn("getAllJobRequests invalid filter", {
+      requestId: req.requestId,
+      filter,
+    });
     throw new ApiError(400, "invalid filter");
   }
 
-  let [jobRequests,totalRequests]=await prisma.$transaction([
+  const dbStart = Date.now();
+
+  let [jobRequests, totalRequests] = await prisma.$transaction([
     prisma.job.findMany({
       where: whereClause,
-      skip:skip,
-      take:limit,
-      orderBy:{createdAt:"desc"},
+      skip,
+      take: limit,
+      orderBy: { createdAt: "desc" },
       select: {
         id: true,
         title: true,
@@ -1395,19 +1419,27 @@ const getAllJobRequests = asyncHandler(async (req, res) => {
     }),
 
     prisma.job.count({
-      where:whereClause
-    })
-  ])
+      where: whereClause,
+    }),
+  ]);
 
+  log.info("getAllJobRequests DB query completed", {
+    requestId: req.requestId,
+    collegeId: college.id,
+    filter,
+    resultCount: jobRequests.length,
+    totalRequests,
+    durationMs: Date.now() - dbStart,
+  });
 
   jobRequests = jobRequests.map((job) => ({
     id: job.id,
     title: job.title,
     salary: job.salary,
-    deadline: job.dueDate, // 🔥 rename here
+    deadline: job.dueDate,
     companyName: job.company.name,
     mentorName: job.mentor?.user?.name ?? null,
-    status:filter
+    status: filter,
   }));
 
   const responsePayLoad = {
@@ -1435,14 +1467,16 @@ const getAllJobRequests = asyncHandler(async (req, res) => {
     JSON.stringify(responsePayLoad),
   );
 
-  res.json(
-    new ApiResponse(
-      200,
-      responsePayLoad,
-      "job requests"
-    )
-  );
+  log.info("getAllJobRequests cache populated", {
+    requestId: req.requestId,
+    collegeId: college.id,
+    cacheKey,
+    ttl: ttlMap[filter] ?? 60,
+  });
+
+  res.json(new ApiResponse(200, responsePayLoad, "job requests"));
 });
+
 
 
 const getJobDetails = asyncHandler(async (req, res) => {
