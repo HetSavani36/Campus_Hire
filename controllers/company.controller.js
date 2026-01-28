@@ -10,6 +10,7 @@ const prisma = new PrismaClient();
 import crypto from "crypto";
 import { canStudentApplicationTransition } from "../domain/studentApplicationStateMachine.js";
 import { redisConnection } from "../config/redis.js";
+import { log } from "../utils/logger.js";
 
 function createJobHash(data) {
   return crypto
@@ -28,40 +29,41 @@ function createJobHash(data) {
     .digest("hex");
 }
 
-
 const createEmployee = asyncHandler(async (req, res) => {
+  log.info("request.start", {
+    action: "createEmployee",
+    actorId: req.user.id,
+    role: req.user.role,
+    ip: req.ip,
+  });
+
   const { name, email, hireDate } = req.body;
   if (!name || !email) throw new ApiError(403, "please provide all details");
 
   const company = await prisma.company.findUnique({
-    where: {
-      email: req.user.email,
-    },
-    select:{
-      id:true,
-      name:true
-    }
+    where: { email: req.user.email },
+    select: { id: true, name: true },
   });
   if (!company) throw new ApiError(404, "no company found for this user");
 
-  
   const password = generatePassword(8);
-  let employee=null
-  
+  let employee = null;
+
   try {
-    await prisma.$transaction(async(tx)=>{
+    await prisma.$transaction(async (tx) => {
       const hashedPassword = await hashPassword(password);
+
       const user = await tx.user.create({
         data: {
-          name: name,
-          email: email,
+          name,
+          email,
           password: hashedPassword,
           role: "employee",
-          createdAt: hireDate ? new Date(hireDate) : new Date()
+          createdAt: hireDate ? new Date(hireDate) : new Date(),
         },
-        select:{id:true}
+        select: { id: true },
       });
-      
+
       employee = await tx.employee.create({
         data: {
           userId: user.id,
@@ -89,29 +91,55 @@ const createEmployee = asyncHandler(async (req, res) => {
           },
         },
       });
-    })
+    });
   } catch (err) {
-      if (err.code === "P2002") throw new ApiError(409, "user/employee already exists");
-      throw new ApiError(500, "failed to create employee");
+    if (err.code === "P2002") {
+      log.warn("employee.create.conflict", {
+        email,
+        companyId: company.id,
+      });
+      throw new ApiError(409, "user/employee already exists");
+    }
+
+    log.error("employee.create.failed", {
+      error: err.message,
+      companyId: company.id,
+    });
+    throw new ApiError(500, "failed to create employee");
   }
-  
+
   await emailQueue.add(
     "employee-credentials",
     {
-      name: name,
-      email: email,
-      password:password,
-      companyName:company.name
+      name,
+      email,
+      password,
+      companyName: company.name,
     },
-    emailOptions
+    emailOptions,
   );
 
+  log.info("side_effect.email_enqueued", {
+    action: "createEmployee",
+    queue: "employee-credentials",
+    email,
+  });
+
   await redisConnection.incr(`company:${company.id}:employees:version`);
-  
-  res.json(
-    new ApiResponse( 201, employee, "employee created successfully" ) 
-  );
+
+  log.info("side_effect.cache_invalidated", {
+    key: `company:${company.id}:employees:version`,
+  });
+
+  log.info("request.success", {
+    action: "createEmployee",
+    employeeId: employee.id,
+    companyId: company.id,
+  });
+
+  res.json(new ApiResponse(201, employee, "employee created successfully"));
 });
+
 
 const collabWithCollege = asyncHandler(async (req, res) => {
   const { collegeId } = req.params;

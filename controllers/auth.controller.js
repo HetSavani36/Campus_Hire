@@ -12,6 +12,7 @@ import {
 import { emailOptions, emailQueue } from "../queues/email-queue.js";
 import crypto from "crypto"
 import { redisConnection } from "../config/redis.js";
+import { log } from "../utils/logger.js";
 
 const prisma = new PrismaClient();
 
