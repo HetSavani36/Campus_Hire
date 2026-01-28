@@ -16,63 +16,128 @@ import { redisConnection } from "../config/redis.js";
 const prisma = new PrismaClient();
 
 const registerCollege = asyncHandler(async (req, res) => {
-  const { name, address, email, phone, password, confirmPassword } = req.body;
-  
-  if (!name || !address || !email || !password || !confirmPassword) throw new ApiError(400, "provide all fields");
-  if (password !== confirmPassword) throw new ApiError(403, "password and confirm password must be same");
-  if (address.length < 2) throw new ApiError(403, "address must be greater than 1 characters");
-  if (name.length < 2) throw new ApiError(403, "name must be greater than 1 characters");
+  log.info("registerCollege request received", {
+    requestId: req.requestId,
+    email: req.body?.email,
+    ip: req.ip,
+  });
 
-  let college=null
-  let collegeAdmin=null
+  const { name, address, email, phone, password, confirmPassword } = req.body;
+
+  if (!name || !address || !email || !password || !confirmPassword) {
+    log.warn("registerCollege validation failed: missing fields", {
+      requestId: req.requestId,
+      email,
+    });
+    throw new ApiError(400, "provide all fields");
+  }
+
+  if (password !== confirmPassword) {
+    log.warn("registerCollege password mismatch", {
+      requestId: req.requestId,
+      email,
+    });
+    throw new ApiError(403, "password and confirm password must be same");
+  }
+
+  if (address.length < 2 || name.length < 2) {
+    log.warn("registerCollege validation failed: name/address too short", {
+      requestId: req.requestId,
+      email,
+    });
+    throw new ApiError(403, "invalid name or address length");
+  }
+
+  let college = null;
+  let collegeAdmin = null;
 
   try {
-    await prisma.$transaction(async(tx)=>{
-      college=await tx.college.create({
+    const txStart = Date.now();
+
+    await prisma.$transaction(async (tx) => {
+      college = await tx.college.create({
         data: {
           name: name.toUpperCase(),
           address: address,
           email: email.toLowerCase(),
           phone: phone ?? "NA",
         },
-      })
+      });
 
       const hashedPassword = await hashPassword(password);
-      
-      collegeAdmin=await tx.user.create({
+
+      collegeAdmin = await tx.user.create({
         data: {
           name: name.toUpperCase(),
           email: email,
           password: hashedPassword,
           role: "collegeAdmin",
         },
-      })
+      });
+
       collegeAdmin.password = undefined;
-    })
+    });
+
+    log.info("registerCollege DB transaction completed", {
+      requestId: req.requestId,
+      collegeId: college.id,
+      adminId: collegeAdmin.id,
+      durationMs: Date.now() - txStart,
+    });
   } catch (err) {
-    if (err.code === "P2002") throw new ApiError(409, "email is already registered");
-    throw new ApiError(409,err)
+    if (err.code === "P2002") {
+      log.warn("registerCollege duplicate email attempt", {
+        requestId: req.requestId,
+        email,
+      });
+      throw new ApiError(409, "email is already registered");
+    }
+
+    log.error("registerCollege transaction failed", {
+      requestId: req.requestId,
+      email,
+      error: err.message,
+    });
+    throw new ApiError(409, err);
   }
 
   await emailQueue.add(
     "register-college",
     {
       name: college.name,
-      email: college.email
+      email: college.email,
     },
-    emailOptions
+    emailOptions,
   );
 
-  await redisConnection.incr('colleges:version')
-  
+  log.info("registerCollege email queued", {
+    requestId: req.requestId,
+    collegeId: college.id,
+    email: college.email,
+  });
+
+  await redisConnection.incr("colleges:version");
+
+  log.info("registerCollege cache invalidated", {
+    requestId: req.requestId,
+    key: "colleges:version",
+  });
+
   res.json(
     new ApiResponse(
       201,
-      { college:college, admin:collegeAdmin },
-      "college registered successfully"
-    )
+      { college: college, admin: collegeAdmin },
+      "college registered successfully",
+    ),
   );
+
+  log.info("registerCollege completed successfully", {
+    requestId: req.requestId,
+    collegeId: college.id,
+    adminId: collegeAdmin.id,
+  });
 });
+
 
 const registerCompany = asyncHandler(async (req, res) => {
   const { name, address, email, password, confirmPassword, registrationNo, contactNo, } = req.body;
