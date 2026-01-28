@@ -5,16 +5,19 @@ import hasCompletedProfile from "../middlewares/hasCompleteProfile.middleware.js
 import upload from "../middlewares/multer.middleware.js"
 import { addSkill, apply, createProfile, editProfile, getJobDetail, getJobsList, uploadBulkStudents } from "../controllers/student.controller.js";
 import { rateLimitAddSkillForStudent, rateLimitApplyInJob, rateLimitCreateStudentProfile, rateLimitEditStudentProfile, rateLimitJobDetailsForStudent, rateLimitJobsForStudent, rateLimitUploadBulkStudents } from "../middlewares/rateLimit.js";
+import { requestIdMiddleware } from "../middlewares/requestId.js";
 
 const router = Router();
+router.use(verifyJWT)
+router.use(requestIdMiddleware)
 
-router.post("/upload",verifyJWT,authorizeRole("collegeAdmin"),upload.single("file"),rateLimitUploadBulkStudents,uploadBulkStudents);
-router.post("/profile", verifyJWT, authorizeRole("student"), rateLimitCreateStudentProfile,createProfile);
-router.put("/profile", verifyJWT, authorizeRole("student"),hasCompletedProfile,rateLimitEditStudentProfile,editProfile);
-router.post("/add/skill", verifyJWT, authorizeRole("student"),hasCompletedProfile,rateLimitAddSkillForStudent,addSkill);
-router.post("/apply/:jobId", verifyJWT, authorizeRole("student"),hasCompletedProfile,rateLimitApplyInJob,apply);
+router.post("/upload",authorizeRole("collegeAdmin"),upload.single("file"),rateLimitUploadBulkStudents,uploadBulkStudents);
+router.post("/profile", authorizeRole("student"), rateLimitCreateStudentProfile,createProfile);
+router.put("/profile", authorizeRole("student"),hasCompletedProfile,rateLimitEditStudentProfile,editProfile);
+router.post("/add/skill", authorizeRole("student"),hasCompletedProfile,rateLimitAddSkillForStudent,addSkill);
+router.post("/apply/:jobId", authorizeRole("student"),hasCompletedProfile,rateLimitApplyInJob,apply);
 
-router.get("/jobs", verifyJWT, authorizeRole("student"),hasCompletedProfile,rateLimitJobsForStudent,getJobsList);
-router.get("/job/:jobId", verifyJWT, authorizeRole("student"),hasCompletedProfile,rateLimitJobDetailsForStudent,getJobDetail);
+router.get("/jobs", authorizeRole("student"),hasCompletedProfile,rateLimitJobsForStudent,getJobsList);
+router.get("/job/:jobId", authorizeRole("student"),hasCompletedProfile,rateLimitJobDetailsForStudent,getJobDetail);
 
 export default router;

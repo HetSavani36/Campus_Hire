@@ -18,27 +18,31 @@ import {
   exportEmployees,
 } from "../controllers/company.controller.js";
 import { rateLimitAddSkillForCompany, rateLimitCollabRequest, rateLimitCollegeDetailsForCompany, rateLimitCollegesForCompany, rateLimitCompanyResetPassword, rateLimitCreateEmployee, rateLimitEmployeeDetailsForCompany, rateLimitEmployeesForCompany, rateLimitExportEmployees, rateLimitJobDetailsForCompany, rateLimitJobsForCompany, rateLimitPostJob, rateLimitSkillsForCompany, rateLimitStudentApplicationDecisionForCompany } from "../middlewares/rateLimit.js";
+import { requestIdMiddleware } from "../middlewares/requestId.js";
 
 const router = Router();
 
-router.post("/create/employee",verifyJWT,authorizeRole("companyAdmin"),rateLimitCreateEmployee,createEmployee);
-router.post("/collab/:collegeId",verifyJWT,authorizeRole("companyAdmin"),rateLimitCollabRequest,collabWithCollege);
-router.post("/reset-password/:userId",verifyJWT,authorizeRole("companyAdmin"),rateLimitCompanyResetPassword,resetPassword);
+router.use(verifyJWT)
+router.use(requestIdMiddleware)
 
-router.post("/create/job",verifyJWT,authorizeRole("companyAdmin"),rateLimitPostJob,postJob);
-router.post("/add/skill",verifyJWT,authorizeRole("companyAdmin","employee"),rateLimitAddSkillForCompany,addSkill);
+router.post("/create/employee",authorizeRole("companyAdmin"),rateLimitCreateEmployee,createEmployee);
+router.post("/collab/:collegeId",authorizeRole("companyAdmin"),rateLimitCollabRequest,collabWithCollege);
+router.post("/reset-password/:userId",authorizeRole("companyAdmin"),rateLimitCompanyResetPassword,resetPassword);
 
-router.post("/application/:applicationId",verifyJWT,authorizeRole("employee"),rateLimitStudentApplicationDecisionForCompany,makeStudentApplicationDecision);
+router.post("/create/job",authorizeRole("companyAdmin"),rateLimitPostJob,postJob);
+router.post("/add/skill",authorizeRole("companyAdmin","employee"),rateLimitAddSkillForCompany,addSkill);
 
-router.get("/export/employees",verifyJWT,authorizeRole("companyAdmin"),rateLimitExportEmployees,exportEmployees);
-router.get("/employees",verifyJWT,authorizeRole("companyAdmin"),rateLimitEmployeesForCompany,getEmployeesList);
-router.get("/employee/:employeeId",verifyJWT,authorizeRole("companyAdmin"),rateLimitEmployeeDetailsForCompany,getEmployeeDetail);
-router.get("/college",verifyJWT,authorizeRole("companyAdmin"),rateLimitCollegesForCompany,getAllColleges);
-router.get("/college/:collegeId",verifyJWT,authorizeRole("companyAdmin"),rateLimitCollegeDetailsForCompany,getCollegeDetails);
+router.post("/application/:applicationId",authorizeRole("employee"),rateLimitStudentApplicationDecisionForCompany,makeStudentApplicationDecision);
 
-router.get("/skills",verifyJWT,authorizeRole("companyAdmin","employee"),rateLimitSkillsForCompany,getAllSkills);
-router.get("/jobs", verifyJWT, authorizeRole("companyAdmin"),rateLimitJobsForCompany,getAllJobs);
-router.get("/job/:jobId", verifyJWT, authorizeRole("companyAdmin"),rateLimitJobDetailsForCompany,getJobDetails);
+router.get("/export/employees",authorizeRole("companyAdmin"),rateLimitExportEmployees,exportEmployees);
+router.get("/employees",authorizeRole("companyAdmin"),rateLimitEmployeesForCompany,getEmployeesList);
+router.get("/employee/:employeeId",authorizeRole("companyAdmin"),rateLimitEmployeeDetailsForCompany,getEmployeeDetail);
+router.get("/college",authorizeRole("companyAdmin"),rateLimitCollegesForCompany,getAllColleges);
+router.get("/college/:collegeId",authorizeRole("companyAdmin"),rateLimitCollegeDetailsForCompany,getCollegeDetails);
+
+router.get("/skills",authorizeRole("companyAdmin","employee"),rateLimitSkillsForCompany,getAllSkills);
+router.get("/jobs", authorizeRole("companyAdmin"),rateLimitJobsForCompany,getAllJobs);
+router.get("/job/:jobId", authorizeRole("companyAdmin"),rateLimitJobDetailsForCompany,getJobDetails);
 
 
 export default router
