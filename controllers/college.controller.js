@@ -1103,31 +1103,60 @@ const mentorDetails = asyncHandler(async (req, res) => {
 
 
 const getAllCollabRequests = asyncHandler(async (req, res) => {
-  const allowedStatus=["accepted","rejected","pending"]
+  const allowedStatus = ["accepted", "rejected", "pending"];
   let { status = "pending" } = req.query;
-  if(!allowedStatus.includes(status)) status="pending"
+  if (!allowedStatus.includes(status)) status = "pending";
 
-  const { page, limit ,skip } = getPagination(req.query);
+  const { page, limit, skip } = getPagination(req.query);
+
+  log.info("getAllCollabRequests request received", {
+    requestId: req.requestId,
+    adminId: req.user.id,
+    status,
+    page,
+    limit,
+  });
 
   const college = await prisma.college.findUnique({
     where: { email: req.user.email },
-    select:{id:true}
+    select: { id: true },
   });
-  if (!college) throw new ApiError(404, "no such college found");
 
-    const version = (await redisConnection.get(`college:${college.id}:collab:requests:version`)) || 1;
+  if (!college) {
+    log.error("getAllCollabRequests college not found", {
+      requestId: req.requestId,
+      adminId: req.user.id,
+    });
+    throw new ApiError(404, "no such college found");
+  }
 
-    const cacheKey = `college:${college.id}:collab:requests:v${version}:status:${status}:page:${page}:limit:${limit}`;
-    const cached = await redisConnection.get(cacheKey);
-    if (cached) {
-      return res.json(
-        new ApiResponse(
-          200,
-          JSON.parse(cached),
-          "collab requests(cached)",
-        ),
-      );
-    }
+  const version =
+    (await redisConnection.get(
+      `college:${college.id}:collab:requests:version`,
+    )) || 1;
+
+  const cacheKey = `college:${college.id}:collab:requests:v${version}:status:${status}:page:${page}:limit:${limit}`;
+
+  const cached = await redisConnection.get(cacheKey);
+  if (cached) {
+    log.info("getAllCollabRequests cache hit", {
+      requestId: req.requestId,
+      collegeId: college.id,
+      cacheKey,
+    });
+
+    return res.json(
+      new ApiResponse(200, JSON.parse(cached), "collab requests (cached)"),
+    );
+  }
+
+  log.info("getAllCollabRequests cache miss", {
+    requestId: req.requestId,
+    collegeId: college.id,
+    cacheKey,
+  });
+
+  const queryStart = Date.now();
 
   let [collabRequests, totalRequests] = await prisma.$transaction([
     prisma.collab.findMany({
@@ -1155,13 +1184,20 @@ const getAllCollabRequests = asyncHandler(async (req, res) => {
     }),
   ]);
 
+  log.info("getAllCollabRequests DB query completed", {
+    requestId: req.requestId,
+    collegeId: college.id,
+    durationMs: Date.now() - queryStart,
+    returned: collabRequests.length,
+    totalRequests,
+  });
 
-  collabRequests=collabRequests.map((request)=>({
+  collabRequests = collabRequests.map((request) => ({
     ...request,
-    status:status
-  }))
+    status: status,
+  }));
 
-  const responsePayLoad={
+  const responsePayLoad = {
     collabRequests,
     pagination: {
       page,
@@ -1169,20 +1205,22 @@ const getAllCollabRequests = asyncHandler(async (req, res) => {
       totalRequests,
       totalPages: Math.ceil(totalRequests / limit),
       hasPrevPage: page > 1,
-      hasNextPage: skip+collabRequests.length < totalRequests,
+      hasNextPage: skip + collabRequests.length < totalRequests,
     },
-  }
+  };
 
-  await redisConnection.setex(cacheKey,60,JSON.stringify(responsePayLoad))
+  await redisConnection.setex(cacheKey, 60, JSON.stringify(responsePayLoad));
 
-  res.json(
-    new ApiResponse(
-      200,
-      responsePayLoad,
-      "collab requests"
-    )
-  );
+  log.info("getAllCollabRequests cache populated", {
+    requestId: req.requestId,
+    collegeId: college.id,
+    cacheKey,
+    ttl: 60,
+  });
+
+  res.json(new ApiResponse(200, responsePayLoad, "collab requests"));
 });
+
 
 const getCompanyDetails = asyncHandler(async (req, res) => {
   const { companyId } = req.params;
