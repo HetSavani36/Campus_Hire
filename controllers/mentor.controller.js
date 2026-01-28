@@ -5,6 +5,7 @@ import { asyncHandler } from "../utils/asyncHandler.js";
 import { emailOptions, emailQueue } from "../queues/email-queue.js";
 import { canJobTransition } from "../domain/jobStateMachine.js";
 import { redisConnection } from "../config/redis.js";
+import { log } from "../utils/logger.js";
 const prisma=new PrismaClient()
 
 const makeStudentApplicationDecision = asyncHandler(async (req, res) => {

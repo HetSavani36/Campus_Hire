@@ -7,6 +7,7 @@ import { parseFileBuffer } from "../utils/csv_parsing.util.js";
 import { emailOptions, emailQueue } from "../queues/email-queue.js";
 import csv from "csv-parser";
 import { redisConnection } from "../config/redis.js";
+import { log } from "../utils/logger.js";
 
 const prisma = new PrismaClient();
 
