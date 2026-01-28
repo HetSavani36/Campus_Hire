@@ -287,17 +287,30 @@ const getAllJobs = asyncHandler(async (req, res) => {
 
 
 const getJobDetails = asyncHandler(async (req, res) => {
+  log.info("request.start", {
+    action: "getJobDetails",
+    actorId: req.user.id,
+    role: req.user.role,
+    ip: req.ip,
+    jobId: req.params.jobId,
+  });
+
   const { jobId } = req.params;
   if (!jobId) throw new ApiError(403, "please provide job id");
 
   const mentor = await prisma.mentor.findUnique({
     where: { userId: req.user.id },
-    select:{
-      id:true,
-      collegeId:true
-    }
+    select: {
+      id: true,
+      collegeId: true,
+    },
   });
   if (!mentor) throw new ApiError(404, "no such mentor found");
+
+  log.info("mentor.resolved", {
+    mentorId: mentor.id,
+    collegeId: mentor.collegeId,
+  });
 
   const job = await prisma.job.findUnique({
     where: { id: jobId },
@@ -313,7 +326,6 @@ const getJobDetails = asyncHandler(async (req, res) => {
       isApproved: true,
       createdAt: true,
       mentorId: true,
-
       company: {
         select: {
           id: true,
@@ -323,7 +335,6 @@ const getJobDetails = asyncHandler(async (req, res) => {
           contactNo: true,
         },
       },
-
       applications: {
         select: {
           id: true,
@@ -334,11 +345,33 @@ const getJobDetails = asyncHandler(async (req, res) => {
     },
   });
 
-  if (!job) throw new ApiError(404, "no such job found");
-  if (job.collegeId !== mentor.collegeId)
+  if (!job) {
+    log.warn("mentorJob.not_found", {
+      jobId,
+    });
+
+    throw new ApiError(404, "no such job found");
+  }
+
+  if (job.collegeId !== mentor.collegeId) {
+    log.warn("mentorJob.forbidden.college", {
+      jobId,
+      mentorCollegeId: mentor.collegeId,
+      jobCollegeId: job.collegeId,
+    });
+
     throw new ApiError(403, "job not belongs to your college");
-  if (job.mentorId !== mentor.id)
+  }
+
+  if (job.mentorId !== mentor.id) {
+    log.warn("mentorJob.forbidden.mentor", {
+      jobId,
+      mentorId: mentor.id,
+      jobMentorId: job.mentorId,
+    });
+
     throw new ApiError(403, "job is not under you");
+  }
 
   // -------- Group applications --------
   const groupedApplications = {
@@ -361,14 +394,26 @@ const getJobDetails = asyncHandler(async (req, res) => {
     pending: groupedApplications.pending.length,
   };
 
+  log.info("mentorJob.applications.aggregated", {
+    jobId,
+    applicationCount,
+  });
+
   const response = {
     ...job,
     applications: groupedApplications,
     applicationCount,
   };
 
+  log.info("request.success", {
+    action: "getJobDetails",
+    jobId,
+    mentorId: mentor.id,
+  });
+
   res.json(new ApiResponse(200, response, "job details"));
 });
+
 
 
 export {
