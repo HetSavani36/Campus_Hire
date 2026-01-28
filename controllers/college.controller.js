@@ -1483,25 +1483,48 @@ const getJobDetails = asyncHandler(async (req, res) => {
   const { jobId } = req.params;
   if (!jobId) throw new ApiError(403, "please provide job id");
 
+  log.info("getJobDetails request received", {
+    requestId: req.requestId,
+    jobId,
+    requesterId: req.user?.id,
+  });
+
   const college = await prisma.college.findUnique({
     where: { email: req.user.email },
-    select:{id:true}
+    select: { id: true },
   });
-  if (!college) throw new ApiError(404, "no such college found");
+  if (!college) {
+    log.warn("getJobDetails college not found", {
+      requestId: req.requestId,
+      email: req.user.email,
+    });
+    throw new ApiError(404, "no such college found");
+  }
 
   const version = (await redisConnection.get(`job:${jobId}:version`)) || 1;
 
-  const cacheKey = `job:${jobId}}:v${version}`;
+  const cacheKey = `job:${jobId}:v${version}`;
   const cached = await redisConnection.get(cacheKey);
+
   if (cached) {
+    log.info("getJobDetails cache hit", {
+      requestId: req.requestId,
+      jobId,
+      cacheKey,
+    });
+
     return res.json(
-      new ApiResponse(
-        200,
-        JSON.parse(cached),
-        "job requests(cached)",
-      ),
+      new ApiResponse(200, JSON.parse(cached), "job detail(cached)"),
     );
   }
+
+  log.info("getJobDetails cache miss", {
+    requestId: req.requestId,
+    jobId,
+    cacheKey,
+  });
+
+  const dbStart = Date.now();
 
   const job = await prisma.job.findUnique({
     where: { id: jobId },
@@ -1549,9 +1572,30 @@ const getJobDetails = asyncHandler(async (req, res) => {
     },
   });
 
-  if (!job) throw new ApiError(404, "no such job found");
-  if (job.collegeId !== college.id)
+  log.info("getJobDetails DB query completed", {
+    requestId: req.requestId,
+    jobId,
+    durationMs: Date.now() - dbStart,
+    found: !!job,
+  });
+
+  if (!job) {
+    log.warn("getJobDetails job not found", {
+      requestId: req.requestId,
+      jobId,
+    });
+    throw new ApiError(404, "no such job found");
+  }
+
+  if (job.collegeId !== college.id) {
+    log.warn("getJobDetails unauthorized college access", {
+      requestId: req.requestId,
+      jobId,
+      collegeId: college.id,
+      jobCollegeId: job.collegeId,
+    });
     throw new ApiError(403, "you cant see another college job details");
+  }
 
   const formattedJob = {
     id: job.id,
@@ -1576,10 +1620,18 @@ const getJobDetails = asyncHandler(async (req, res) => {
     }, []),
   };
 
-  await redisConnection.setex(cacheKey,120,JSON.stringify(formattedJob))
+  await redisConnection.setex(cacheKey, 120, JSON.stringify(formattedJob));
+
+  log.info("getJobDetails cache populated", {
+    requestId: req.requestId,
+    jobId,
+    cacheKey,
+    ttl: 120,
+  });
 
   res.json(new ApiResponse(200, formattedJob, "job detail"));
 });
+
 
 
 const exportMentors = asyncHandler(async (req, res) => {
