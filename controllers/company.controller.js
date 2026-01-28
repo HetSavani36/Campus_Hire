@@ -142,6 +142,14 @@ const createEmployee = asyncHandler(async (req, res) => {
 
 
 const collabWithCollege = asyncHandler(async (req, res) => {
+  log.info("request.start", {
+    action: "collabWithCollege",
+    actorId: req.user.id,
+    role: req.user.role,
+    collegeId: req.params.collegeId,
+    ip: req.ip,
+  });
+
   const { collegeId } = req.params;
   if (!collegeId) throw new ApiError(400, "please provide college id");
 
@@ -179,7 +187,15 @@ const collabWithCollege = asyncHandler(async (req, res) => {
 
     if (existing) {
       collabRequest = existing;
-      return; 
+
+      log.info("collab.already_exists", {
+        companyId: company.id,
+        collegeId,
+        collabId: existing.id,
+        status: existing.status,
+      });
+
+      return;
     }
 
     collabRequest = await tx.collab.create({
@@ -197,6 +213,12 @@ const collabWithCollege = asyncHandler(async (req, res) => {
     });
 
     created = true;
+
+    log.info("collab.created", {
+      collabId: collabRequest.id,
+      companyId: company.id,
+      collegeId,
+    });
   });
 
   if (created) {
@@ -207,11 +229,33 @@ const collabWithCollege = asyncHandler(async (req, res) => {
         collegeName: college.name,
         companyName: company.name,
       },
-      emailOptions
+      emailOptions,
     );
+
+    log.info("side_effect.email_enqueued", {
+      action: "collabWithCollege",
+      queue: "collab-request",
+      collegeEmail: college.email,
+    });
+
     await redisConnection.incr(`college:${college.id}:collab:requests:version`);
     await redisConnection.incr(`colleges:version`);
+
+    log.info("side_effect.cache_invalidated", {
+      keys: [
+        `college:${college.id}:collab:requests:version`,
+        `colleges:version`,
+      ],
+    });
   }
+
+  log.info("request.success", {
+    action: "collabWithCollege",
+    created,
+    collabId: collabRequest.id,
+    companyId: company.id,
+    collegeId,
+  });
 
   res.json(
     new ApiResponse(
@@ -219,10 +263,11 @@ const collabWithCollege = asyncHandler(async (req, res) => {
       collabRequest,
       created
         ? "collaboration request sent successfully"
-        : "collaboration request already exists"
-    )
+        : "collaboration request already exists",
+    ),
   );
 });
+
 
 
 const resetPassword = asyncHandler(async (req, res) => {
