@@ -298,14 +298,21 @@ const collabDecision = asyncHandler(async (req, res) => {
 
 const resetPassword = asyncHandler(async (req, res) => {
   const { userId } = req.params;
+
+  log.info("resetPassword request received", {
+    requestId: req.requestId,
+    adminId: req.user.id,
+    targetUserId: userId,
+  });
+
   const user = await prisma.user.findUnique({
     where: { id: userId },
     select: {
       id: true,
       email: true,
-      name:true,
+      name: true,
       password: true,
-      role:true,
+      role: true,
       mentor: {
         select: {
           collegeId: true,
@@ -318,17 +325,53 @@ const resetPassword = asyncHandler(async (req, res) => {
       },
     },
   });
-  if (!user) throw new ApiError(404, "no such user found");
+
+  if (!user) {
+    log.info("resetPassword target user not found", {
+      requestId: req.requestId,
+      targetUserId: userId,
+    });
+    throw new ApiError(404, "no such user found");
+  }
 
   const college = await prisma.college.findUnique({
     where: { email: req.user.email },
-    select:{id:true}
+    select: { id: true },
   });
-  if (!college) throw new ApiError(404, "no such college found");
 
-  if (!user.mentor && !user.student) throw new ApiError(403, "you can only reset password of student/mentor");
-  if ( (user.mentor && user.mentor.collegeId !== college.id) || (user.student && user.student.collegeId !== college.id) ) throw new ApiError(403,"you cant reset password of user outside your organization");
-  
+  if (!college) {
+    log.error("resetPassword college not found for admin", {
+      requestId: req.requestId,
+      adminId: req.user.id,
+    });
+    throw new ApiError(404, "no such college found");
+  }
+
+  if (!user.mentor && !user.student) {
+    log.info("resetPassword invalid target role", {
+      requestId: req.requestId,
+      targetUserId: user.id,
+      role: user.role,
+    });
+    throw new ApiError(403, "you can only reset password of student/mentor");
+  }
+
+  if (
+    (user.mentor && user.mentor.collegeId !== college.id) ||
+    (user.student && user.student.collegeId !== college.id)
+  ) {
+    log.warn("resetPassword cross-organization attempt blocked", {
+      requestId: req.requestId,
+      adminCollegeId: college.id,
+      targetUserId: user.id,
+      targetRole: user.role,
+    });
+    throw new ApiError(
+      403,
+      "you cant reset password of user outside your organization",
+    );
+  }
+
   const password = generatePassword(8);
   const hashedPassword = await hashPassword(password);
 
@@ -338,25 +381,43 @@ const resetPassword = asyncHandler(async (req, res) => {
       password: hashedPassword,
     },
   });
-  
-  await tx.session.updateMany({
+
+  log.info("resetPassword password updated", {
+    requestId: req.requestId,
+    targetUserId: user.id,
+    role: user.role,
+  });
+
+  await prisma.session.updateMany({
     where: { userId: user.id },
     data: { revokedAt: new Date() },
   });
-  
+
+  log.info("resetPassword sessions revoked", {
+    requestId: req.requestId,
+    targetUserId: user.id,
+  });
+
   await emailQueue.add(
     "reset-password",
     {
       name: user.name,
       email: user.email,
       role: user.role,
-      password:password
+      password: password,
     },
-    emailOptions
+    emailOptions,
   );
+
+  log.info("resetPassword email queued", {
+    requestId: req.requestId,
+    targetUserId: user.id,
+    email: user.email,
+  });
 
   res.json(new ApiResponse(200, {}, "password reset successfully"));
 });
+
 
 
 
