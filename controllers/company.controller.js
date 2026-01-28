@@ -435,10 +435,16 @@ const addSkill = asyncHandler(async (req, res) => {
 
 
 const postJob = asyncHandler(async (req, res) => {
+  log.info("request.start", {
+    action: "postJob",
+    actorId: req.user.id,
+    role: req.user.role,
+    ip: req.ip,
+  });
+
   const { title, salary, tenure, address, dueDate } = req.body;
   let { skills, collegeIds } = req.body;
 
-  // ---------- Input validation ----------
   if (!title || !Array.isArray(collegeIds) || collegeIds.length === 0) {
     throw new ApiError(400, "title and at least one college is required");
   }
@@ -449,14 +455,23 @@ const postJob = asyncHandler(async (req, res) => {
   collegeIds = [...new Set(collegeIds)];
   skills = [...new Set(skills)];
 
-  // ---------- Fetch company ----------
+  log.info("postJob.input.validated", {
+    title,
+    collegeCount: collegeIds.length,
+    skillCount: skills.length,
+  });
+
   const company = await prisma.company.findUnique({
     where: { email: req.user.email },
     select: { id: true, name: true, address: true },
   });
   if (!company) throw new ApiError(404, "no such company found");
 
-  // ---------- Validate colleges ----------
+  log.info("postJob.company.resolved", {
+    companyId: company.id,
+    companyName: company.name,
+  });
+
   const colleges = await prisma.college.findMany({
     where: { id: { in: collegeIds } },
     select: { id: true, name: true, email: true },
@@ -465,7 +480,6 @@ const postJob = asyncHandler(async (req, res) => {
     throw new ApiError(400, "one or more colleges are invalid");
   }
 
-  // ---------- Validate skills ----------
   const skillRecords = await prisma.skill.findMany({
     where: { id: { in: skills } },
     select: { id: true },
@@ -474,7 +488,6 @@ const postJob = asyncHandler(async (req, res) => {
     throw new ApiError(400, "one or more skills are invalid");
   }
 
-  // ---------- Validate collaborations ----------
   const collabs = await prisma.collab.findMany({
     where: {
       companyId: company.id,
@@ -483,21 +496,24 @@ const postJob = asyncHandler(async (req, res) => {
     },
     select: { collegeId: true },
   });
+
   const allowedColleges = new Set(collabs.map((c) => c.collegeId));
   for (const id of collegeIds) {
     if (!allowedColleges.has(id)) {
+      log.warn("postJob.collab.missing", {
+        companyId: company.id,
+        collegeId: id,
+      });
       throw new ApiError(403, `no active collaboration with college ${id}`);
     }
   }
 
-  // ---------- Final due date ----------
   const finalDueDate = dueDate
     ? new Date(dueDate)
     : new Date(Date.now() + 10 * 24 * 60 * 60 * 1000);
 
   const createdJobs = [];
 
-  // ---------- Transaction ----------
   await prisma.$transaction(async (tx) => {
     for (const college of colleges) {
       const jobHash = createJobHash({
@@ -528,11 +544,16 @@ const postJob = asyncHandler(async (req, res) => {
           select: {
             id: true,
             title: true,
-            college: { select: {id:true, name: true, email: true } },
+            college: { select: { id: true, name: true, email: true } },
           },
         });
 
         created = true;
+
+        log.info("postJob.job.created", {
+          jobId: job.id,
+          collegeId: college.id,
+        });
       } catch (err) {
         if (err.code === "P2002") {
           job = await tx.job.findUnique({
@@ -546,8 +567,13 @@ const postJob = asyncHandler(async (req, res) => {
             select: {
               id: true,
               title: true,
-              college: { select: {id:true, name: true, email: true } },
+              college: { select: { id: true, name: true, email: true } },
             },
+          });
+
+          log.info("postJob.job.duplicate", {
+            jobId: job.id,
+            collegeId: college.id,
           });
         } else {
           throw err;
@@ -568,7 +594,6 @@ const postJob = asyncHandler(async (req, res) => {
     }
   });
 
-  // ---------- Side effects ----------
   for (const entry of createdJobs) {
     if (!entry.created) continue;
 
@@ -580,18 +605,41 @@ const postJob = asyncHandler(async (req, res) => {
         companyName: company.name,
         jobTitle: entry.job.title,
       },
-      emailOptions
+      emailOptions,
     );
-    await redisConnection.incr(`college:${entry.job.college.id}:job:requests:version`);
+
+    log.info("postJob.email.queued", {
+      jobId: entry.job.id,
+      collegeId: entry.job.college.id,
+    });
+
+    await redisConnection.incr(
+      `college:${entry.job.college.id}:job:requests:version`,
+    );
     await redisConnection.incr(`college:${entry.job.college.id}:jobs:version`);
+
+    log.info("postJob.cache.invalidated", {
+      collegeId: entry.job.college.id,
+    });
   }
 
   await redisConnection.incr(`company:${company.id}:jobs:version`);
 
+  log.info("postJob.cache.invalidated", {
+    companyId: company.id,
+  });
+
+  log.info("request.success", {
+    action: "postJob",
+    totalJobs: createdJobs.length,
+    createdCount: createdJobs.filter((j) => j.created).length,
+  });
+
   res.json(
-    new ApiResponse(200, createdJobs, "job posting processed successfully")
+    new ApiResponse(200, createdJobs, "job posting processed successfully"),
   );
 });
+
 
 
 const makeStudentApplicationDecision = asyncHandler(async (req, res) => {
