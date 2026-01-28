@@ -273,11 +273,23 @@ const createProfile = asyncHandler(async (req, res) => {
 
 
 const editProfile = asyncHandler(async (req, res) => {
+  log.info("request.start", {
+    action: "editProfile",
+    actorId: req.user.id,
+    role: req.user.role,
+    ip: req.ip,
+  });
+
   const allowedUpdates = ["year", "resume", "aboutMe", "branch"];
   const update = {};
 
   allowedUpdates.forEach((field) => {
     if (req.body[field]) update[field] = req.body[field];
+  });
+
+  log.info("editProfile.update.fields", {
+    userId: req.user.id,
+    fields: Object.keys(update),
   });
 
   const user = await prisma.student.update({
@@ -305,6 +317,16 @@ const editProfile = asyncHandler(async (req, res) => {
         },
       },
     },
+  });
+
+  log.info("editProfile.updated", {
+    studentId: user.id,
+    userId: req.user.id,
+  });
+
+  log.info("request.success", {
+    action: "editProfile",
+    userId: req.user.id,
   });
 
   res.json(new ApiResponse(200, user, "profile updated succeessfully"));
