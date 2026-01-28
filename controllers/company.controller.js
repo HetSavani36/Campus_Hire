@@ -365,33 +365,74 @@ const resetPassword = asyncHandler(async (req, res) => {
 
 
 const addSkill = asyncHandler(async (req, res) => {
+  log.info("request.start", {
+    action: "addSkill",
+    actorId: req.user.id,
+    role: req.user.role,
+    ip: req.ip,
+  });
+
   const { name } = req.body;
   if (!name) throw new ApiError(400, "please provide skill name");
 
-  let occured=false
-  let skill=null
+  const skillName = name.toUpperCase();
+  let occured = false;
+  let skill = null;
 
-  await prisma.$transaction(async(tx)=>{
+  await prisma.$transaction(async (tx) => {
     const exists = await tx.skill.findUnique({
-      where: { name: name.toUpperCase() }
+      where: { name: skillName },
     });
+
     if (exists) {
-      skill=exists
-      return
+      skill = exists;
+
+      log.info("skill.exists", {
+        action: "addSkill",
+        skillName,
+        skillId: exists.id,
+      });
+
+      return;
     }
 
     skill = await tx.skill.create({
       data: {
-        name: name.toUpperCase(),
-      }
+        name: skillName,
+      },
     });
-    occured=true
-  })
 
-  await redisConnection.incr(`company:skills:version`)
+    occured = true;
 
-  res.json(new ApiResponse(201, skill, occured?"new skill added":"skill already exists"));
+    log.info("skill.created", {
+      action: "addSkill",
+      skillName,
+      skillId: skill.id,
+    });
+  });
+
+  await redisConnection.incr(`company:skills:version`);
+
+  log.info("cache.invalidated", {
+    action: "addSkill",
+    key: "company:skills:version",
+  });
+
+  log.info("request.success", {
+    action: "addSkill",
+    skillId: skill.id,
+    occured,
+  });
+
+  res.json(
+    new ApiResponse(
+      201,
+      skill,
+      occured ? "new skill added" : "skill already exists",
+    ),
+  );
 });
+
 
 const postJob = asyncHandler(async (req, res) => {
   const { title, salary, tenure, address, dueDate } = req.body;
