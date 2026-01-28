@@ -333,6 +333,13 @@ const editProfile = asyncHandler(async (req, res) => {
 });
 
 const addSkill = asyncHandler(async (req, res) => {
+  log.info("request.start", {
+    action: "addSkill",
+    actorId: req.user.id,
+    role: req.user.role,
+    ip: req.ip,
+  });
+
   const { name } = req.body;
   if (!name) throw new ApiError(400, "skill name is required");
 
@@ -342,7 +349,15 @@ const addSkill = asyncHandler(async (req, res) => {
   });
   if (!student) throw new ApiError(404, "student not found");
 
+  log.info("student.resolved", {
+    studentId: student.id,
+  });
+
   const normalizedName = name.trim().toUpperCase();
+
+  log.info("studentSkill.input.normalized", {
+    skillName: normalizedName,
+  });
 
   await prisma.$transaction(async (tx) => {
     let skill;
@@ -352,11 +367,21 @@ const addSkill = asyncHandler(async (req, res) => {
         data: { name: normalizedName },
         select: { id: true },
       });
+
+      log.info("studentSkill.skill.created", {
+        skillId: skill.id,
+        skillName: normalizedName,
+      });
     } catch (err) {
       if (err.code === "P2002") {
         skill = await tx.skill.findUnique({
           where: { name: normalizedName },
           select: { id: true },
+        });
+
+        log.info("studentSkill.skill.exists", {
+          skillId: skill.id,
+          skillName: normalizedName,
         });
       } else {
         throw err;
@@ -370,10 +395,22 @@ const addSkill = asyncHandler(async (req, res) => {
       },
       skipDuplicates: true,
     });
+
+    log.info("studentSkill.mapped", {
+      studentId: student.id,
+      skillId: skill.id,
+    });
+  });
+
+  log.info("request.success", {
+    action: "addSkill",
+    studentId: student.id,
+    skillName: normalizedName,
   });
 
   res.json(new ApiResponse(201, normalizedName, "skill added successfully"));
 });
+
 
 
 const apply = asyncHandler(async (req, res) => {
