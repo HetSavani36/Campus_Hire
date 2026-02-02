@@ -7,21 +7,39 @@ import { parseFileBuffer } from "../utils/csv_parsing.util.js";
 import { emailOptions, emailQueue } from "../queues/email-queue.js";
 import csv from "csv-parser";
 import { redisConnection } from "../config/redis.js";
+import { log } from "../utils/logger.js";
 
 const prisma = new PrismaClient();
 
 const uploadBulkStudents = asyncHandler(async (req, res) => {
+  log.info("request.start", {
+    action: "uploadBulkStudents",
+    actorId: req.user.id,
+    role: req.user.role,
+    ip: req.ip,
+  });
+
   if (!req.file) throw new ApiError(400, "CSV file is required");
-  
+
   const college = await prisma.college.findUnique({
     where: { email: req.user.email },
-    select:{id:true}
+    select: { id: true },
   });
   if (!college) throw new ApiError(404, "College not found");
 
+  log.info("bulkStudents.college.resolved", {
+    collegeId: college.id,
+  });
+
   const rows = await parseFileBuffer(req.file.buffer, req.file.originalname);
-  if (!rows || rows.length === 0) throw new ApiError(400, "CSV file is empty or invalid");
-  
+  if (!rows || rows.length === 0)
+    throw new ApiError(400, "CSV file is empty or invalid");
+
+  log.info("bulkStudents.file.parsed", {
+    totalRows: rows.length,
+    filename: req.file.originalname,
+  });
+
   const createdStudents = [];
   const skippedStudents = [];
 
@@ -31,12 +49,18 @@ const uploadBulkStudents = asyncHandler(async (req, res) => {
         email: row.email || null,
         reason: "Missing required fields",
       });
+
+      log.info("bulkStudents.row.skipped", {
+        reason: "missing_fields",
+        email: row.email || null,
+      });
+
       continue;
     }
-    
+
     const password = generatePassword(8);
     const hashedPassword = await hashPassword(password);
-  
+
     try {
       const user = await prisma.user.create({
         data: {
@@ -62,16 +86,32 @@ const uploadBulkStudents = asyncHandler(async (req, res) => {
         password,
         rollNo: row.rollNo || null,
       });
+
+      log.info("bulkStudents.student.created", {
+        userId: user.id,
+        email: user.email,
+      });
     } catch (err) {
-        if (err.code === "P2002") {
-          skippedStudents.push({
-            email: row.email,
-            reason: "User already exists",
-          });
-          continue
-        }
-        throw new ApiError(500, "failed to create student");
-    }      
+      if (err.code === "P2002") {
+        skippedStudents.push({
+          email: row.email,
+          reason: "User already exists",
+        });
+
+        log.info("bulkStudents.student.skipped", {
+          email: row.email,
+          reason: "already_exists",
+        });
+
+        continue;
+      }
+
+      log.warn("bulkStudents.student.create_failed", {
+        email: row.email,
+      });
+
+      throw new ApiError(500, "failed to create student");
+    }
   }
 
   for (const student of createdStudents) {
@@ -81,11 +121,21 @@ const uploadBulkStudents = asyncHandler(async (req, res) => {
         email: student.email,
         password: student.password,
         name: student.name,
-        rollNo:student.rollNo
+        rollNo: student.rollNo,
       },
-      emailOptions
+      emailOptions,
     );
+
+    log.info("bulkStudents.email.queued", {
+      email: student.email,
+    });
   }
+
+  log.info("request.success", {
+    action: "uploadBulkStudents",
+    createdCount: createdStudents.length,
+    skippedCount: skippedStudents.length,
+  });
 
   return res.json(
     new ApiResponse(
@@ -95,12 +145,20 @@ const uploadBulkStudents = asyncHandler(async (req, res) => {
         skippedCount: skippedStudents.length,
         skippedStudents,
       },
-      "Bulk student upload completed successfully"
-    )
+      "Bulk student upload completed successfully",
+    ),
   );
 });
 
+
 const createProfile = asyncHandler(async (req, res) => {
+  log.info("request.start", {
+    action: "createProfile",
+    actorId: req.user.id,
+    role: req.user.role,
+    ip: req.ip,
+  });
+
   const { year, aboutMe, branch } = req.body;
 
   if (!year || !branch) {
@@ -110,6 +168,11 @@ const createProfile = asyncHandler(async (req, res) => {
   if (!["1", "2", "3", "4"].includes(year)) {
     throw new ApiError(400, "invalid year");
   }
+
+  log.info("createProfile.input.validated", {
+    year,
+    branch,
+  });
 
   await prisma.$transaction(async (tx) => {
     const user = await tx.user.findUnique({
@@ -121,8 +184,20 @@ const createProfile = asyncHandler(async (req, res) => {
       },
     });
 
-    if (!user) throw new ApiError(404, "user not found");
+    if (!user) {
+      log.warn("createProfile.user.not_found", {
+        userId: req.user.id,
+      });
+
+      throw new ApiError(404, "user not found");
+    }
+
     if (!user.metadata?.collegeId || !user.metadata?.rollNo) {
+      log.warn("createProfile.metadata.missing", {
+        userId: user.id,
+        metadata: user.metadata,
+      });
+
       throw new ApiError(403, "collegeId or rollNo missing");
     }
 
@@ -142,11 +217,21 @@ const createProfile = asyncHandler(async (req, res) => {
           aboutMe: aboutMe ?? null,
         },
       });
+
+      log.info("createProfile.student.created", {
+        userId: user.id,
+        collegeId: user.metadata.collegeId,
+      });
     }
 
     await tx.user.updateMany({
       where: { id: user.id, hasCompletedProfile: false },
       data: { hasCompletedProfile: true },
+    });
+
+    log.info("createProfile.user.updated", {
+      userId: user.id,
+      hasCompletedProfile: true,
     });
   });
 
@@ -177,16 +262,35 @@ const createProfile = asyncHandler(async (req, res) => {
     },
   });
 
+  log.info("request.success", {
+    action: "createProfile",
+    userId: req.user.id,
+    hasCompletedProfile: finalUser?.hasCompletedProfile,
+  });
+
   res.json(new ApiResponse(200, finalUser, "profile created successfully"));
 });
 
 
+
 const editProfile = asyncHandler(async (req, res) => {
+  log.info("request.start", {
+    action: "editProfile",
+    actorId: req.user.id,
+    role: req.user.role,
+    ip: req.ip,
+  });
+
   const allowedUpdates = ["year", "resume", "aboutMe", "branch"];
   const update = {};
 
   allowedUpdates.forEach((field) => {
     if (req.body[field]) update[field] = req.body[field];
+  });
+
+  log.info("editProfile.update.fields", {
+    userId: req.user.id,
+    fields: Object.keys(update),
   });
 
   const user = await prisma.student.update({
@@ -216,10 +320,27 @@ const editProfile = asyncHandler(async (req, res) => {
     },
   });
 
+  log.info("editProfile.updated", {
+    studentId: user.id,
+    userId: req.user.id,
+  });
+
+  log.info("request.success", {
+    action: "editProfile",
+    userId: req.user.id,
+  });
+
   res.json(new ApiResponse(200, user, "profile updated succeessfully"));
 });
 
 const addSkill = asyncHandler(async (req, res) => {
+  log.info("request.start", {
+    action: "addSkill",
+    actorId: req.user.id,
+    role: req.user.role,
+    ip: req.ip,
+  });
+
   const { name } = req.body;
   if (!name) throw new ApiError(400, "skill name is required");
 
@@ -229,7 +350,15 @@ const addSkill = asyncHandler(async (req, res) => {
   });
   if (!student) throw new ApiError(404, "student not found");
 
+  log.info("student.resolved", {
+    studentId: student.id,
+  });
+
   const normalizedName = name.trim().toUpperCase();
+
+  log.info("studentSkill.input.normalized", {
+    skillName: normalizedName,
+  });
 
   await prisma.$transaction(async (tx) => {
     let skill;
@@ -239,11 +368,21 @@ const addSkill = asyncHandler(async (req, res) => {
         data: { name: normalizedName },
         select: { id: true },
       });
+
+      log.info("studentSkill.skill.created", {
+        skillId: skill.id,
+        skillName: normalizedName,
+      });
     } catch (err) {
       if (err.code === "P2002") {
         skill = await tx.skill.findUnique({
           where: { name: normalizedName },
           select: { id: true },
+        });
+
+        log.info("studentSkill.skill.exists", {
+          skillId: skill.id,
+          skillName: normalizedName,
         });
       } else {
         throw err;
@@ -257,79 +396,124 @@ const addSkill = asyncHandler(async (req, res) => {
       },
       skipDuplicates: true,
     });
+
+    log.info("studentSkill.mapped", {
+      studentId: student.id,
+      skillId: skill.id,
+    });
+  });
+
+  log.info("request.success", {
+    action: "addSkill",
+    studentId: student.id,
+    skillName: normalizedName,
   });
 
   res.json(new ApiResponse(201, normalizedName, "skill added successfully"));
 });
 
 
+
 const apply = asyncHandler(async (req, res) => {
-  
+  log.info("request.start", {
+    action: "applyJob",
+    actorId: req.user.id,
+    role: req.user.role,
+    ip: req.ip,
+    jobId: req.params.jobId,
+  });
+
   const { jobId } = req.params;
+
   const student = await prisma.student.findUnique({
     where: { userId: req.user.id },
-    select:{
-      id:true,
-      resume:true,
-      collegeId:true,
-      user:{
-        select:{
-          name:true,
-          email:true
-        }
-      }
-    }
+    select: {
+      id: true,
+      resume: true,
+      collegeId: true,
+      user: {
+        select: {
+          name: true,
+          email: true,
+        },
+      },
+    },
   });
   if (!student) throw new ApiError(404, "no such student found");
-  if (!student.resume) throw new ApiError(403, "please upload your resume first");
+  if (!student.resume)
+    throw new ApiError(403, "please upload your resume first");
 
-  const idempotencyKey=req.headers["idempotency-key"]
-  if(!idempotencyKey) throw new ApiError(403,"idempotency key header is required")
-  
-  let responseSnapshot=null
-  let occured=false
+  log.info("applyJob.student.resolved", {
+    studentId: student.id,
+    collegeId: student.collegeId,
+  });
 
-  await prisma.$transaction(async(tx)=>{
+  const idempotencyKey = req.headers["idempotency-key"];
+  if (!idempotencyKey)
+    throw new ApiError(403, "idempotency key header is required");
 
-    const existingKey=await tx.idempotencyKey.findUnique({
-      where:{key:idempotencyKey}
-    })
-    if(existingKey){
-      responseSnapshot=existingKey.response
-      occured=false
-      return
+  log.info("applyJob.idempotency.received", {
+    key: idempotencyKey,
+  });
+
+  let responseSnapshot = null;
+  let occured = false;
+
+  await prisma.$transaction(async (tx) => {
+    const existingKey = await tx.idempotencyKey.findUnique({
+      where: { key: idempotencyKey },
+    });
+
+    if (existingKey) {
+      responseSnapshot = existingKey.response;
+      occured = false;
+
+      log.info("applyJob.idempotency.hit", {
+        key: idempotencyKey,
+      });
+
+      return;
     }
 
     const job = await tx.job.findUnique({
       where: { id: jobId },
-      select:{
-        id:true,
-        collegeId:true,
-        status:true,
-        isApproved:true,
-        dueDate:true,
-        mentorId:true,
-        title:true
-      }
+      select: {
+        id: true,
+        collegeId: true,
+        status: true,
+        isApproved: true,
+        dueDate: true,
+        mentorId: true,
+        title: true,
+      },
     });
     if (!job) throw new ApiError(404, "no such job found");
-  
-    if (job.collegeId !== student.collegeId) throw new ApiError(403, "the job is not for your college");
-    if (!job.isApproved) throw new ApiError(403, "cant apply to un-approved job");
-    if (job.status === "closed") throw new ApiError(403, "job application is closed");
-    if (job.dueDate < new Date()) throw new ApiError(403, "the job application has expired");
+
+    log.info("applyJob.job.resolved", {
+      jobId: job.id,
+      collegeId: job.collegeId,
+    });
+
+    if (job.collegeId !== student.collegeId)
+      throw new ApiError(403, "the job is not for your college");
+    if (!job.isApproved)
+      throw new ApiError(403, "cant apply to un-approved job");
+    if (job.status === "closed")
+      throw new ApiError(403, "job application is closed");
+    if (job.dueDate < new Date())
+      throw new ApiError(403, "the job application has expired");
     if (!job.mentorId) throw new ApiError(403, "cant apply without mentor");
-  
-    
-    let application=null
-    const selectQuery={
+
+    let application = null;
+
+    const selectQuery = {
       id: true,
       status: true,
       appliedAt: true,
       job: {
         select: {
-          id:true,
-          title:true,
+          id: true,
+          title: true,
           company: {
             select: {
               email: true,
@@ -350,7 +534,7 @@ const apply = asyncHandler(async (req, res) => {
           },
         },
       },
-    }
+    };
 
     try {
       application = await tx.application.create({
@@ -359,35 +543,58 @@ const apply = asyncHandler(async (req, res) => {
           jobId: job.id,
           mentorId: job.mentorId,
         },
-        select: selectQuery
+        select: selectQuery,
       });
-      occured=true
 
+      occured = true;
+
+      log.info("applyJob.application.created", {
+        applicationId: application.id,
+        jobId: job.id,
+        studentId: student.id,
+      });
     } catch (error) {
-        if(error.code==="P2002"){
-          application = await tx.application.findUnique({
-            where: { studentId_jobId: { studentId: student.id, jobId:job.id } },
-            select:selectQuery
-          });
-          occured = false;
-        }
-        else throw error
+      if (error.code === "P2002") {
+        application = await tx.application.findUnique({
+          where: {
+            studentId_jobId: {
+              studentId: student.id,
+              jobId: job.id,
+            },
+          },
+          select: selectQuery,
+        });
+
+        occured = false;
+
+        log.info("applyJob.application.exists", {
+          applicationId: application.id,
+          jobId: job.id,
+          studentId: student.id,
+        });
+      } else {
+        throw error;
+      }
     }
 
-    responseSnapshot=application
+    responseSnapshot = application;
 
     await tx.idempotencyKey.create({
-      data:{
-        key:idempotencyKey,
-        userId:student.id,
-        endpoint:"POST /api/job/:jobId/apply",
-        response:responseSnapshot
-      }
-    })
-    
-  })
+      data: {
+        key: idempotencyKey,
+        userId: student.id,
+        endpoint: "POST /api/job/:jobId/apply",
+        response: responseSnapshot,
+      },
+    });
 
-  if(occured){
+    log.info("applyJob.idempotency.stored", {
+      key: idempotencyKey,
+      applicationId: responseSnapshot.id,
+    });
+  });
+
+  if (occured) {
     await emailQueue.add(
       "job-applied",
       {
@@ -396,16 +603,43 @@ const apply = asyncHandler(async (req, res) => {
         companyName: responseSnapshot.job.company.name,
         email: student.user.email,
       },
-      emailOptions
+      emailOptions,
     );
-    await redisConnection.incr(`company:job:${responseSnapshot.job.id}:version`)
-    await redisConnection.incr(`job:${responseSnapshot.job.id}:version`)
+
+    log.info("applyJob.email.queued", {
+      jobId: responseSnapshot.job.id,
+      studentId: student.id,
+    });
+
+    await redisConnection.incr(
+      `company:job:${responseSnapshot.job.id}:version`,
+    );
+    await redisConnection.incr(`job:${responseSnapshot.job.id}:version`);
+
+    log.info("applyJob.cache.invalidated", {
+      jobId: responseSnapshot.job.id,
+    });
   }
 
-  res.json(new ApiResponse(201, responseSnapshot, "your have applied to this job"));
+  log.info("request.success", {
+    action: "applyJob",
+    jobId,
+    occured,
+  });
+
+  res.json(
+    new ApiResponse(201, responseSnapshot, "your have applied to this job"),
+  );
 });
 
 const getJobsList = asyncHandler(async (req, res) => {
+  log.info("request.start", {
+    action: "getJobsList",
+    actorId: req.user.id,
+    role: req.user.role,
+    ip: req.ip,
+  });
+
   const { filter = "current" } = req.query;
   const { page, limit, skip } = getPagination(req.query);
 
@@ -418,15 +652,37 @@ const getJobsList = asyncHandler(async (req, res) => {
   });
   if (!student) throw new ApiError(404, "no such student found");
 
-  const version = (await redisConnection.get(`college:${student.collegeId}:jobs:version`)) || 1;
+  log.info("student.resolved", {
+    studentId: student.id,
+    collegeId: student.collegeId,
+  });
+
+  const version =
+    (await redisConnection.get(`college:${student.collegeId}:jobs:version`)) ||
+    1;
 
   const cacheKey = `college:${student.collegeId}:jobs:v${version}:filter:${filter}:page:${page}:limit:${limit}`;
   const cached = await redisConnection.get(cacheKey);
+
   if (cached) {
+    log.info("studentJobs.cache.hit", {
+      collegeId: student.collegeId,
+      filter,
+      page,
+      limit,
+    });
+
     return res.json(
       new ApiResponse(200, JSON.parse(cached), "jobs list(cached)"),
     );
   }
+
+  log.info("studentJobs.cache.miss", {
+    collegeId: student.collegeId,
+    filter,
+    page,
+    limit,
+  });
 
   const now = new Date();
 
@@ -444,6 +700,10 @@ const getJobsList = asyncHandler(async (req, res) => {
      JOB-BASED FILTERS
   -------------------------------------------------- */
   if (["current", "past", "all"].includes(filter)) {
+    log.info("studentJobs.filter.job_based", {
+      filter,
+    });
+
     const whereClause = {
       status: "active",
       collegeId: student.collegeId,
@@ -467,10 +727,9 @@ const getJobsList = asyncHandler(async (req, res) => {
     jobs = rows;
     totalJobs = count;
   } else if (
-
-  /* --------------------------------------------------
-     APPLICATION-BASED FILTERS
-  -------------------------------------------------- */
+    /* --------------------------------------------------
+       APPLICATION-BASED FILTERS
+    -------------------------------------------------- */
     [
       "pending",
       "rejected",
@@ -481,6 +740,10 @@ const getJobsList = asyncHandler(async (req, res) => {
       "mentor_approval_rejected",
     ].includes(filter)
   ) {
+    log.info("studentJobs.filter.application_based", {
+      filter,
+    });
+
     const whereClause = {
       studentId: student.id,
       ...(filter === "pending" && { status: "pending" }),
@@ -514,10 +777,11 @@ const getJobsList = asyncHandler(async (req, res) => {
     jobs = rows.map((r) => r.job);
     totalJobs = count;
   } else if (filter === "not_applied") {
+    /* --------------------------------------------------
+       NOT APPLIED
+    -------------------------------------------------- */
+    log.info("studentJobs.filter.not_applied");
 
-  /* --------------------------------------------------
-     NOT APPLIED
-  -------------------------------------------------- */
     const whereClause = {
       status: "active",
       collegeId: student.collegeId,
@@ -544,8 +808,19 @@ const getJobsList = asyncHandler(async (req, res) => {
     jobs = rows;
     totalJobs = count;
   } else {
+    log.warn("studentJobs.filter.invalid", {
+      filter,
+    });
+
     throw new ApiError(400, "invalid filter");
   }
+
+  log.info("studentJobs.query.executed", {
+    collegeId: student.collegeId,
+    filter,
+    returnedCount: jobs.length,
+    totalJobs,
+  });
 
   const responsePayLoad = {
     jobs,
@@ -559,37 +834,71 @@ const getJobsList = asyncHandler(async (req, res) => {
     },
   };
 
-  await redisConnection.setex(cacheKey,60,JSON.stringify(responsePayLoad))
+  await redisConnection.setex(cacheKey, 60, JSON.stringify(responsePayLoad));
 
-  res.json(
-    new ApiResponse(
-      200,
-      responsePayLoad,
-      "student jobs"
-    )
-  );
+  log.info("studentJobs.cache.set", {
+    collegeId: student.collegeId,
+    filter,
+    page,
+    limit,
+    ttl: 60,
+  });
+
+  log.info("request.success", {
+    action: "getJobsList",
+    studentId: student.id,
+    filter,
+    returnedCount: jobs.length,
+  });
+
+  res.json(new ApiResponse(200, responsePayLoad, "student jobs"));
 });
 
 
+
 const getJobDetail = asyncHandler(async (req, res) => {
+  log.info("request.start", {
+    action: "getJobDetail",
+    actorId: req.user.id,
+    role: req.user.role,
+    ip: req.ip,
+    jobId: req.params.jobId,
+  });
+
   const { jobId } = req.params;
   if (!jobId) throw new ApiError(403, "please provide job id");
 
   const student = await prisma.student.findUnique({
     where: { userId: req.user.id },
-    select:{collegeId:true}
+    select: { collegeId: true },
   });
   if (!student) throw new ApiError(404, "no such student found");
 
-  const version = (await redisConnection.get(`company:job:${jobId}:version`)) || 1;
+  log.info("student.resolved", {
+    collegeId: student.collegeId,
+  });
+
+  const version =
+    (await redisConnection.get(`company:job:${jobId}:version`)) || 1;
 
   const cacheKey = `company:job:${jobId}}:v${version}`;
   const cached = await redisConnection.get(cacheKey);
+
   if (cached) {
+    log.info("studentJob.cache.hit", {
+      jobId,
+      collegeId: student.collegeId,
+    });
+
     return res.json(
       new ApiResponse(200, JSON.parse(cached), "job requests(cached)"),
     );
   }
+
+  log.info("studentJob.cache.miss", {
+    jobId,
+    collegeId: student.collegeId,
+  });
 
   const job = await prisma.job.findUnique({
     where: { id: jobId },
@@ -624,25 +933,70 @@ const getJobDetail = asyncHandler(async (req, res) => {
       },
     },
   });
-  if (!job) throw new ApiError(404, "no such job found");
-  if (job.collegeId !== student.collegeId)
+
+  if (!job) {
+    log.warn("studentJob.not_found", {
+      jobId,
+    });
+
+    throw new ApiError(404, "no such job found");
+  }
+
+  if (job.collegeId !== student.collegeId) {
+    log.warn("studentJob.forbidden.college", {
+      jobId,
+      studentCollegeId: student.collegeId,
+      jobCollegeId: job.collegeId,
+    });
+
     throw new ApiError(403, "you cant apply to another college job");
-  if (job.status !== "active")
+  }
+
+  if (job.status !== "active") {
+    log.warn("studentJob.inactive", {
+      jobId,
+      status: job.status,
+    });
+
     throw new ApiError(403, "the job is currently not active");
-  if (job.isApproved === false)
+  }
+
+  if (job.isApproved === false) {
+    log.warn("studentJob.not_approved", {
+      jobId,
+    });
+
     throw new ApiError(403, "the job is not approved by your college yet");
-  if (!job.mentorId)
+  }
+
+  if (!job.mentorId) {
+    log.warn("studentJob.mentor.missing", {
+      jobId,
+    });
+
     throw new ApiError(403, "your college has not yet assigned a mentor");
+  }
 
   job.mentor = {
     name: job.mentor.user.name,
     email: job.mentor.user.email,
   };
 
-  await redisConnection.setex(cacheKey,60,JSON.stringify(job))
+  await redisConnection.setex(cacheKey, 60, JSON.stringify(job));
+
+  log.info("studentJob.cache.set", {
+    jobId,
+    ttl: 60,
+  });
+
+  log.info("request.success", {
+    action: "getJobDetail",
+    jobId,
+  });
 
   res.json(new ApiResponse(200, job, "job details"));
 });
+
 
 export {
   uploadBulkStudents,

@@ -10,6 +10,7 @@ const prisma = new PrismaClient();
 import crypto from "crypto";
 import { canStudentApplicationTransition } from "../domain/studentApplicationStateMachine.js";
 import { redisConnection } from "../config/redis.js";
+import { log } from "../utils/logger.js";
 
 function createJobHash(data) {
   return crypto
@@ -28,40 +29,41 @@ function createJobHash(data) {
     .digest("hex");
 }
 
-
 const createEmployee = asyncHandler(async (req, res) => {
+  log.info("request.start", {
+    action: "createEmployee",
+    actorId: req.user.id,
+    role: req.user.role,
+    ip: req.ip,
+  });
+
   const { name, email, hireDate } = req.body;
   if (!name || !email) throw new ApiError(403, "please provide all details");
 
   const company = await prisma.company.findUnique({
-    where: {
-      email: req.user.email,
-    },
-    select:{
-      id:true,
-      name:true
-    }
+    where: { email: req.user.email },
+    select: { id: true, name: true },
   });
   if (!company) throw new ApiError(404, "no company found for this user");
 
-  
   const password = generatePassword(8);
-  let employee=null
-  
+  let employee = null;
+
   try {
-    await prisma.$transaction(async(tx)=>{
+    await prisma.$transaction(async (tx) => {
       const hashedPassword = await hashPassword(password);
+
       const user = await tx.user.create({
         data: {
-          name: name,
-          email: email,
+          name,
+          email,
           password: hashedPassword,
           role: "employee",
-          createdAt: hireDate ? new Date(hireDate) : new Date()
+          createdAt: hireDate ? new Date(hireDate) : new Date(),
         },
-        select:{id:true}
+        select: { id: true },
       });
-      
+
       employee = await tx.employee.create({
         data: {
           userId: user.id,
@@ -89,31 +91,65 @@ const createEmployee = asyncHandler(async (req, res) => {
           },
         },
       });
-    })
+    });
   } catch (err) {
-      if (err.code === "P2002") throw new ApiError(409, "user/employee already exists");
-      throw new ApiError(500, "failed to create employee");
+    if (err.code === "P2002") {
+      log.warn("employee.create.conflict", {
+        email,
+        companyId: company.id,
+      });
+      throw new ApiError(409, "user/employee already exists");
+    }
+
+    log.error("employee.create.failed", {
+      error: err.message,
+      companyId: company.id,
+    });
+    throw new ApiError(500, "failed to create employee");
   }
-  
+
   await emailQueue.add(
     "employee-credentials",
     {
-      name: name,
-      email: email,
-      password:password,
-      companyName:company.name
+      name,
+      email,
+      password,
+      companyName: company.name,
     },
-    emailOptions
+    emailOptions,
   );
+
+  log.info("side_effect.email_enqueued", {
+    action: "createEmployee",
+    queue: "employee-credentials",
+    email,
+  });
 
   await redisConnection.incr(`company:${company.id}:employees:version`);
-  
-  res.json(
-    new ApiResponse( 201, employee, "employee created successfully" ) 
-  );
+
+  log.info("side_effect.cache_invalidated", {
+    key: `company:${company.id}:employees:version`,
+  });
+
+  log.info("request.success", {
+    action: "createEmployee",
+    employeeId: employee.id,
+    companyId: company.id,
+  });
+
+  res.json(new ApiResponse(201, employee, "employee created successfully"));
 });
 
+
 const collabWithCollege = asyncHandler(async (req, res) => {
+  log.info("request.start", {
+    action: "collabWithCollege",
+    actorId: req.user.id,
+    role: req.user.role,
+    collegeId: req.params.collegeId,
+    ip: req.ip,
+  });
+
   const { collegeId } = req.params;
   if (!collegeId) throw new ApiError(400, "please provide college id");
 
@@ -151,7 +187,15 @@ const collabWithCollege = asyncHandler(async (req, res) => {
 
     if (existing) {
       collabRequest = existing;
-      return; 
+
+      log.info("collab.already_exists", {
+        companyId: company.id,
+        collegeId,
+        collabId: existing.id,
+        status: existing.status,
+      });
+
+      return;
     }
 
     collabRequest = await tx.collab.create({
@@ -169,6 +213,12 @@ const collabWithCollege = asyncHandler(async (req, res) => {
     });
 
     created = true;
+
+    log.info("collab.created", {
+      collabId: collabRequest.id,
+      companyId: company.id,
+      collegeId,
+    });
   });
 
   if (created) {
@@ -179,11 +229,33 @@ const collabWithCollege = asyncHandler(async (req, res) => {
         collegeName: college.name,
         companyName: company.name,
       },
-      emailOptions
+      emailOptions,
     );
+
+    log.info("side_effect.email_enqueued", {
+      action: "collabWithCollege",
+      queue: "collab-request",
+      collegeEmail: college.email,
+    });
+
     await redisConnection.incr(`college:${college.id}:collab:requests:version`);
     await redisConnection.incr(`colleges:version`);
+
+    log.info("side_effect.cache_invalidated", {
+      keys: [
+        `college:${college.id}:collab:requests:version`,
+        `colleges:version`,
+      ],
+    });
   }
+
+  log.info("request.success", {
+    action: "collabWithCollege",
+    created,
+    collabId: collabRequest.id,
+    companyId: company.id,
+    collegeId,
+  });
 
   res.json(
     new ApiResponse(
@@ -191,21 +263,30 @@ const collabWithCollege = asyncHandler(async (req, res) => {
       collabRequest,
       created
         ? "collaboration request sent successfully"
-        : "collaboration request already exists"
-    )
+        : "collaboration request already exists",
+    ),
   );
 });
 
 
+
 const resetPassword = asyncHandler(async (req, res) => {
+  log.info("request.start", {
+    action: "resetPassword",
+    actorId: req.user.id,
+    role: req.user.role,
+    targetUserId: req.params.userId,
+    ip: req.ip,
+  });
+
   const { userId } = req.params;
+
   const user = await prisma.user.findUnique({
     where: { id: userId },
     select: {
       id: true,
-      name:true,
+      name: true,
       email: true,
-      password: true,
       employee: {
         select: {
           companyId: true,
@@ -217,73 +298,153 @@ const resetPassword = asyncHandler(async (req, res) => {
 
   const company = await prisma.company.findUnique({
     where: { email: req.user.email },
+    select: { id: true, name: true },
   });
   if (!company) throw new ApiError(404, "no such company found");
-  if (!user.employee) throw new ApiError(403, "you can only reset password of employee");
-  if (user.employee.companyId !== company.id) throw new ApiError(403,"you cant reset password of user outside your organization");
+
+  if (!user.employee)
+    throw new ApiError(403, "you can only reset password of employee");
+
+  if (user.employee.companyId !== company.id)
+    throw new ApiError(
+      403,
+      "you cant reset password of user outside your organization",
+    );
+
+  log.info("authz.passed", {
+    action: "resetPassword",
+    companyId: company.id,
+    targetUserId: user.id,
+  });
 
   const password = generatePassword(8);
   const hashedPassword = await hashPassword(password);
 
-  await prisma.user.update({
-    where: { id: user.id },
-    data: {
-      password: hashedPassword,
-    },
+  await prisma.$transaction(async (tx) => {
+    await tx.user.update({
+      where: { id: user.id },
+      data: { password: hashedPassword },
+    });
+
+    await tx.session.updateMany({
+      where: { userId: user.id },
+      data: { revokedAt: new Date() },
+    });
   });
 
-  await tx.session.updateMany({
-    where: { userId: user.id },
-    data: { revokedAt: new Date() },
+  log.warn("security.password_reset", {
+    targetUserId: user.id,
+    companyId: company.id,
+    sessionsRevoked: true,
   });
 
   await emailQueue.add(
     "reset-password",
     {
-      name:user.name,
-      email:user.email,
-      role:"employee",
+      name: user.name,
+      email: user.email,
+      role: "employee",
     },
-    emailOptions
+    emailOptions,
   );
+
+  log.info("side_effect.email_enqueued", {
+    action: "resetPassword",
+    queue: "reset-password",
+    targetUserEmail: user.email,
+  });
+
+  log.info("request.success", {
+    action: "resetPassword",
+    targetUserId: user.id,
+    companyId: company.id,
+  });
 
   res.json(new ApiResponse(200, {}, "password reset successfully"));
 });
 
+
 const addSkill = asyncHandler(async (req, res) => {
+  log.info("request.start", {
+    action: "addSkill",
+    actorId: req.user.id,
+    role: req.user.role,
+    ip: req.ip,
+  });
+
   const { name } = req.body;
   if (!name) throw new ApiError(400, "please provide skill name");
 
-  let occured=false
-  let skill=null
+  const skillName = name.toUpperCase();
+  let occured = false;
+  let skill = null;
 
-  await prisma.$transaction(async(tx)=>{
+  await prisma.$transaction(async (tx) => {
     const exists = await tx.skill.findUnique({
-      where: { name: name.toUpperCase() }
+      where: { name: skillName },
     });
+
     if (exists) {
-      skill=exists
-      return
+      skill = exists;
+
+      log.info("skill.exists", {
+        action: "addSkill",
+        skillName,
+        skillId: exists.id,
+      });
+
+      return;
     }
 
     skill = await tx.skill.create({
       data: {
-        name: name.toUpperCase(),
-      }
+        name: skillName,
+      },
     });
-    occured=true
-  })
 
-  await redisConnection.incr(`company:skills:version`)
+    occured = true;
 
-  res.json(new ApiResponse(201, skill, occured?"new skill added":"skill already exists"));
+    log.info("skill.created", {
+      action: "addSkill",
+      skillName,
+      skillId: skill.id,
+    });
+  });
+
+  await redisConnection.incr(`company:skills:version`);
+
+  log.info("cache.invalidated", {
+    action: "addSkill",
+    key: "company:skills:version",
+  });
+
+  log.info("request.success", {
+    action: "addSkill",
+    skillId: skill.id,
+    occured,
+  });
+
+  res.json(
+    new ApiResponse(
+      201,
+      skill,
+      occured ? "new skill added" : "skill already exists",
+    ),
+  );
 });
 
+
 const postJob = asyncHandler(async (req, res) => {
+  log.info("request.start", {
+    action: "postJob",
+    actorId: req.user.id,
+    role: req.user.role,
+    ip: req.ip,
+  });
+
   const { title, salary, tenure, address, dueDate } = req.body;
   let { skills, collegeIds } = req.body;
 
-  // ---------- Input validation ----------
   if (!title || !Array.isArray(collegeIds) || collegeIds.length === 0) {
     throw new ApiError(400, "title and at least one college is required");
   }
@@ -294,14 +455,23 @@ const postJob = asyncHandler(async (req, res) => {
   collegeIds = [...new Set(collegeIds)];
   skills = [...new Set(skills)];
 
-  // ---------- Fetch company ----------
+  log.info("postJob.input.validated", {
+    title,
+    collegeCount: collegeIds.length,
+    skillCount: skills.length,
+  });
+
   const company = await prisma.company.findUnique({
     where: { email: req.user.email },
     select: { id: true, name: true, address: true },
   });
   if (!company) throw new ApiError(404, "no such company found");
 
-  // ---------- Validate colleges ----------
+  log.info("postJob.company.resolved", {
+    companyId: company.id,
+    companyName: company.name,
+  });
+
   const colleges = await prisma.college.findMany({
     where: { id: { in: collegeIds } },
     select: { id: true, name: true, email: true },
@@ -310,7 +480,6 @@ const postJob = asyncHandler(async (req, res) => {
     throw new ApiError(400, "one or more colleges are invalid");
   }
 
-  // ---------- Validate skills ----------
   const skillRecords = await prisma.skill.findMany({
     where: { id: { in: skills } },
     select: { id: true },
@@ -319,7 +488,6 @@ const postJob = asyncHandler(async (req, res) => {
     throw new ApiError(400, "one or more skills are invalid");
   }
 
-  // ---------- Validate collaborations ----------
   const collabs = await prisma.collab.findMany({
     where: {
       companyId: company.id,
@@ -328,21 +496,24 @@ const postJob = asyncHandler(async (req, res) => {
     },
     select: { collegeId: true },
   });
+
   const allowedColleges = new Set(collabs.map((c) => c.collegeId));
   for (const id of collegeIds) {
     if (!allowedColleges.has(id)) {
+      log.warn("postJob.collab.missing", {
+        companyId: company.id,
+        collegeId: id,
+      });
       throw new ApiError(403, `no active collaboration with college ${id}`);
     }
   }
 
-  // ---------- Final due date ----------
   const finalDueDate = dueDate
     ? new Date(dueDate)
     : new Date(Date.now() + 10 * 24 * 60 * 60 * 1000);
 
   const createdJobs = [];
 
-  // ---------- Transaction ----------
   await prisma.$transaction(async (tx) => {
     for (const college of colleges) {
       const jobHash = createJobHash({
@@ -373,11 +544,16 @@ const postJob = asyncHandler(async (req, res) => {
           select: {
             id: true,
             title: true,
-            college: { select: {id:true, name: true, email: true } },
+            college: { select: { id: true, name: true, email: true } },
           },
         });
 
         created = true;
+
+        log.info("postJob.job.created", {
+          jobId: job.id,
+          collegeId: college.id,
+        });
       } catch (err) {
         if (err.code === "P2002") {
           job = await tx.job.findUnique({
@@ -391,8 +567,13 @@ const postJob = asyncHandler(async (req, res) => {
             select: {
               id: true,
               title: true,
-              college: { select: {id:true, name: true, email: true } },
+              college: { select: { id: true, name: true, email: true } },
             },
+          });
+
+          log.info("postJob.job.duplicate", {
+            jobId: job.id,
+            collegeId: college.id,
           });
         } else {
           throw err;
@@ -413,7 +594,6 @@ const postJob = asyncHandler(async (req, res) => {
     }
   });
 
-  // ---------- Side effects ----------
   for (const entry of createdJobs) {
     if (!entry.created) continue;
 
@@ -425,31 +605,71 @@ const postJob = asyncHandler(async (req, res) => {
         companyName: company.name,
         jobTitle: entry.job.title,
       },
-      emailOptions
+      emailOptions,
     );
-    await redisConnection.incr(`college:${entry.job.college.id}:job:requests:version`);
+
+    log.info("postJob.email.queued", {
+      jobId: entry.job.id,
+      collegeId: entry.job.college.id,
+    });
+
+    await redisConnection.incr(
+      `college:${entry.job.college.id}:job:requests:version`,
+    );
     await redisConnection.incr(`college:${entry.job.college.id}:jobs:version`);
+
+    log.info("postJob.cache.invalidated", {
+      collegeId: entry.job.college.id,
+    });
   }
 
   await redisConnection.incr(`company:${company.id}:jobs:version`);
 
+  log.info("postJob.cache.invalidated", {
+    companyId: company.id,
+  });
+
+  log.info("request.success", {
+    action: "postJob",
+    totalJobs: createdJobs.length,
+    createdCount: createdJobs.filter((j) => j.created).length,
+  });
+
   res.json(
-    new ApiResponse(200, createdJobs, "job posting processed successfully")
+    new ApiResponse(200, createdJobs, "job posting processed successfully"),
   );
 });
 
 
+
 const makeStudentApplicationDecision = asyncHandler(async (req, res) => {
+  log.info("request.start", {
+    action: "makeStudentApplicationDecision",
+    actorId: req.user.id,
+    role: req.user.role,
+    ip: req.ip,
+  });
+
   const { applicationId } = req.params;
   const { result } = req.body;
-  if (!applicationId || !result) throw new ApiError(403, "please provide studentId and your decision");
-  if ( !["1","0"].includes(result)) throw new ApiError(403, "please provide proper decision in either 0 or 1");
+
+  if (!applicationId || !result) {
+    throw new ApiError(403, "please provide studentId and your decision");
+  }
+  if (!["1", "0"].includes(result)) {
+    throw new ApiError(403, "please provide proper decision in either 0 or 1");
+  }
 
   const nextStatus = result === "1" ? "shortlisted" : "rejected";
-  let application=null
-  let occured=false
+  let application = null;
+  let occured = false;
 
-  await prisma.$transaction(async(tx)=>{
+  log.info("makeDecision.input.validated", {
+    applicationId,
+    nextStatus,
+  });
+
+  await prisma.$transaction(async (tx) => {
     const tempApplication = await tx.application.findUnique({
       where: { id: applicationId },
       select: {
@@ -467,7 +687,7 @@ const makeStudentApplicationDecision = asyncHandler(async (req, res) => {
         },
         job: {
           select: {
-            id:true,
+            id: true,
             title: true,
             company: {
               select: {
@@ -478,75 +698,142 @@ const makeStudentApplicationDecision = asyncHandler(async (req, res) => {
         },
       },
     });
-    if (!tempApplication) throw new ApiError(404, "no such application found");
+
+    if (!tempApplication) {
+      throw new ApiError(404, "no such application found");
+    }
 
     const currentStatus = tempApplication.status;
-    if(!canStudentApplicationTransition(currentStatus,nextStatus)) {
-      if(currentStatus===nextStatus) {
+
+    if (!canStudentApplicationTransition(currentStatus, nextStatus)) {
+      if (currentStatus === nextStatus) {
         application = tempApplication;
-        return
+
+        log.info("makeDecision.noop", {
+          applicationId,
+          status: currentStatus,
+        });
+
+        return;
+      } else {
+        log.warn("makeDecision.invalid_transition", {
+          applicationId,
+          fromStatus: currentStatus,
+          toStatus: nextStatus,
+        });
+
+        throw new ApiError(
+          409,
+          `invalid job transition from ${currentStatus} to ${nextStatus}`,
+        );
       }
-      else throw new ApiError(409,`invalid job transition from ${currentStatus} to ${nextStatus}`)
     }
 
-    const updated=await tx.application.updateMany({
-      where:{id:tempApplication.id,status:currentStatus},
-      data:{status:nextStatus}
-    })
-    
-    if(updated.count===1){
-      occured=true
-      application={
+    const updated = await tx.application.updateMany({
+      where: { id: tempApplication.id, status: currentStatus },
+      data: { status: nextStatus },
+    });
+
+    if (updated.count === 1) {
+      occured = true;
+      application = {
         ...updated,
-        status:nextStatus
-      }
-    }
-  })
+        status: nextStatus,
+      };
 
-  if(occured){
+      log.info("makeDecision.status.updated", {
+        applicationId,
+        fromStatus: currentStatus,
+        toStatus: nextStatus,
+      });
+    }
+  });
+
+  if (occured) {
     await emailQueue.add(
       "student-application-decision-company",
       {
         studentName: application.student.user.name,
-        companyName:application.job.company.name,
-        jobTitle:application.job.title,
-        status:nextStatus,
+        companyName: application.job.company.name,
+        jobTitle: application.job.title,
+        status: nextStatus,
         studentEmail: application.student.user.email,
       },
-      emailOptions
+      emailOptions,
     );
-    
+
+    log.info("makeDecision.email.queued", {
+      applicationId,
+      jobId: application.job.id,
+      status: nextStatus,
+    });
+
     await redisConnection.incr(`company:job:${application.job.id}:version`);
+
+    log.info("makeDecision.cache.invalidated", {
+      jobId: application.job.id,
+    });
   }
 
+  log.info("request.success", {
+    action: "makeStudentApplicationDecision",
+    applicationId,
+    occured,
+    finalStatus: nextStatus,
+  });
+
   res.json(
-    new ApiResponse(
-      200,
-      application,
-      `the student has been ${nextStatus}`
-    )
+    new ApiResponse(200, application, `the student has been ${nextStatus}`),
   );
 });
 
+
 const getEmployeesList = asyncHandler(async (req, res) => {
+  log.info("request.start", {
+    action: "getEmployeesList",
+    actorId: req.user.id,
+    role: req.user.role,
+    ip: req.ip,
+  });
+
   const { search } = req.query;
   const { page, limit, skip } = getPagination(req.query);
 
   const company = await prisma.company.findUnique({
     where: { email: req.user.email },
-    select:{id:true}
+    select: { id: true },
   });
   if (!company) throw new ApiError(404, "no such company found");
 
-  const version = (await redisConnection.get(`company:${company.id}:employees:version`)) || 1;
+  log.info("getEmployees.company.resolved", {
+    companyId: company.id,
+  });
+
+  const version =
+    (await redisConnection.get(`company:${company.id}:employees:version`)) || 1;
 
   const cacheKey = `company:${company.id}:employees:v${version}:filter:${search}:page:${page}:limit:${limit}`;
   const cached = await redisConnection.get(cacheKey);
+
   if (cached) {
+    log.info("getEmployees.cache.hit", {
+      companyId: company.id,
+      page,
+      limit,
+      search,
+    });
+
     return res.json(
       new ApiResponse(200, JSON.parse(cached), "employees list(cached)"),
     );
   }
+
+  log.info("getEmployees.cache.miss", {
+    companyId: company.id,
+    page,
+    limit,
+    search,
+  });
 
   const whereClause = {
     companyId: company.id,
@@ -563,12 +850,12 @@ const getEmployeesList = asyncHandler(async (req, res) => {
     }),
   };
 
-  const [employees,totalEmployees]=await prisma.$transaction([
+  const [employees, totalEmployees] = await prisma.$transaction([
     prisma.employee.findMany({
       where: whereClause,
-      skip:skip,
-      take:limit,
-      orderBy:{id:"desc"},
+      skip: skip,
+      take: limit,
+      orderBy: { id: "desc" },
       select: {
         id: true,
         user: {
@@ -582,11 +869,16 @@ const getEmployeesList = asyncHandler(async (req, res) => {
       },
     }),
 
-    prisma.employee.count({where:whereClause})
+    prisma.employee.count({ where: whereClause }),
+  ]);
 
-  ])
+  log.info("getEmployees.query.executed", {
+    companyId: company.id,
+    returnedCount: employees.length,
+    totalEmployees,
+  });
 
-  const responsePayLoad={
+  const responsePayLoad = {
     employees,
     pagination: {
       page,
@@ -594,39 +886,72 @@ const getEmployeesList = asyncHandler(async (req, res) => {
       totalEmployees,
       totalPages: Math.ceil(totalEmployees / limit),
       hasPrevPage: page > 1,
-      hasNextPage: skip+employees.length < totalEmployees,
+      hasNextPage: skip + employees.length < totalEmployees,
     },
-  }
+  };
 
-  await redisConnection.setex(cacheKey,60,JSON.stringify(responsePayLoad))
+  await redisConnection.setex(cacheKey, 60, JSON.stringify(responsePayLoad));
 
-  res.json(
-    new ApiResponse(
-      200,
-      responsePayLoad,
-      "employees list"
-    )
-  );
+  log.info("getEmployees.cache.set", {
+    companyId: company.id,
+    page,
+    limit,
+    ttl: 60,
+  });
+
+  log.info("request.success", {
+    action: "getEmployeesList",
+    companyId: company.id,
+    page,
+    limit,
+    returnedCount: employees.length,
+  });
+
+  res.json(new ApiResponse(200, responsePayLoad, "employees list"));
 });
 
 const getEmployeeDetail = asyncHandler(async (req, res) => {
+  log.info("request.start", {
+    action: "getEmployeeDetail",
+    actorId: req.user.id,
+    role: req.user.role,
+    ip: req.ip,
+    employeeId: req.params.employeeId,
+  });
+
   const { employeeId } = req.params;
 
   const company = await prisma.company.findUnique({
     where: { email: req.user.email },
-    select:{id:true}
+    select: { id: true },
   });
   if (!company) throw new ApiError(404, "no such company found");
 
-  const version = (await redisConnection.get(`employee:${employeeId}:version`)) || 1;
+  log.info("getEmployee.company.resolved", {
+    companyId: company.id,
+  });
+
+  const version =
+    (await redisConnection.get(`employee:${employeeId}:version`)) || 1;
 
   const cacheKey = `employee:${employeeId}}:v${version}`;
   const cached = await redisConnection.get(cacheKey);
+
   if (cached) {
+    log.info("getEmployee.cache.hit", {
+      employeeId,
+      companyId: company.id,
+    });
+
     return res.json(
       new ApiResponse(200, JSON.parse(cached), "employee details(cached)"),
     );
   }
+
+  log.info("getEmployee.cache.miss", {
+    employeeId,
+    companyId: company.id,
+  });
 
   const employee = await prisma.employee.findUnique({
     where: { id: employeeId },
@@ -666,15 +991,43 @@ const getEmployeeDetail = asyncHandler(async (req, res) => {
       },
     },
   });
-  if (!employee) throw new ApiError(404, "no such employee found");
-  if (employee.companyId !== company.id) throw new ApiError(403, "you cant see employee of another company");
 
-  await redisConnection.setex(cacheKey,120,JSON.stringify(employee))
+  if (!employee) throw new ApiError(404, "no such employee found");
+
+  if (employee.companyId !== company.id) {
+    log.warn("getEmployee.forbidden", {
+      employeeId,
+      companyId: company.id,
+      employeeCompanyId: employee.companyId,
+    });
+
+    throw new ApiError(403, "you cant see employee of another company");
+  }
+
+  await redisConnection.setex(cacheKey, 120, JSON.stringify(employee));
+
+  log.info("getEmployee.cache.set", {
+    employeeId,
+    ttl: 120,
+  });
+
+  log.info("request.success", {
+    action: "getEmployeeDetail",
+    employeeId,
+  });
 
   res.json(new ApiResponse(200, employee, "employee details"));
 });
 
+
 const getAllColleges = asyncHandler(async (req, res) => {
+  log.info("request.start", {
+    action: "getAllColleges",
+    actorId: req.user.id,
+    role: req.user.role,
+    ip: req.ip,
+  });
+
   let { filter = "all" } = req.query;
   const { page, limit, skip } = getPagination(req.query);
 
@@ -684,15 +1037,32 @@ const getAllColleges = asyncHandler(async (req, res) => {
   });
   if (!company) throw new ApiError(404, "no such company found");
 
+  log.info("getColleges.company.resolved", {
+    companyId: company.id,
+  });
+
   const version = (await redisConnection.get(`colleges:version`)) || 1;
 
   const cacheKey = `colleges:v${version}:filter:${filter}:page:${page}:limit:${limit}`;
   const cached = await redisConnection.get(cacheKey);
+
   if (cached) {
+    log.info("getColleges.cache.hit", {
+      filter,
+      page,
+      limit,
+    });
+
     return res.json(
       new ApiResponse(200, JSON.parse(cached), "all colleges(cached)"),
     );
   }
+
+  log.info("getColleges.cache.miss", {
+    filter,
+    page,
+    limit,
+  });
 
   const collegeSelect = {
     id: true,
@@ -705,9 +1075,11 @@ const getAllColleges = asyncHandler(async (req, res) => {
   let totalColleges = 0;
 
   /* --------------------------------------------------
-     FILTER: ALL  (paginate colleges directly)
+     FILTER: ALL
   -------------------------------------------------- */
   if (filter === "all") {
+    log.info("getColleges.filter.all");
+
     const [rows, count] = await prisma.$transaction([
       prisma.college.findMany({
         skip,
@@ -733,17 +1105,19 @@ const getAllColleges = asyncHandler(async (req, res) => {
         c.collabs.length === 0
           ? "not applied"
           : c.collabs[0].status === "accepted"
-          ? "collaborated"
-          : c.collabs[0].status,
+            ? "collaborated"
+            : c.collabs[0].status,
     }));
 
     totalColleges = count;
   } else if (["pending", "rejected", "collaborated"].includes(filter)) {
+    /* --------------------------------------------------
+       FILTER: pending / rejected / collaborated
+    -------------------------------------------------- */
+    log.info("getColleges.filter.collab", {
+      filter,
+    });
 
-  /* --------------------------------------------------
-     FILTER: pending / rejected / collaborated
-     (paginate collabs, NOT colleges)
-  -------------------------------------------------- */
     const statusMap = {
       pending: "pending",
       rejected: "rejected",
@@ -776,11 +1150,11 @@ const getAllColleges = asyncHandler(async (req, res) => {
 
     totalColleges = count;
   } else if (filter === "not_applied") {
+    /* --------------------------------------------------
+       FILTER: not_applied
+    -------------------------------------------------- */
+    log.info("getColleges.filter.not_applied");
 
-  /* --------------------------------------------------
-     FILTER: not_applied
-     (paginate colleges NOT having a collab)
-  -------------------------------------------------- */
     const whereClause = {
       collabs: {
         none: {
@@ -807,8 +1181,18 @@ const getAllColleges = asyncHandler(async (req, res) => {
 
     totalColleges = count;
   } else {
+    log.warn("getColleges.filter.invalid", {
+      filter,
+    });
+
     throw new ApiError(400, "invalid filter");
   }
+
+  log.info("getColleges.query.executed", {
+    filter,
+    returnedCount: colleges.length,
+    totalColleges,
+  });
 
   const responsePayLoad = {
     colleges,
@@ -822,30 +1206,56 @@ const getAllColleges = asyncHandler(async (req, res) => {
     },
   };
 
-  await redisConnection.incr(cacheKey,60,JSON.stringify(responsePayLoad))
+  await redisConnection.setex(cacheKey, 60, JSON.stringify(responsePayLoad));
 
-  res.json(
-    new ApiResponse(
-      200,
-      responsePayLoad,
-      "colleges list"
-    )
-  );
+  log.info("getColleges.cache.set", {
+    filter,
+    page,
+    limit,
+    ttl: 60,
+  });
+
+  log.info("request.success", {
+    action: "getAllColleges",
+    filter,
+    returnedCount: colleges.length,
+  });
+
+  res.json(new ApiResponse(200, responsePayLoad, "colleges list"));
 });
 
 
+
 const getCollegeDetails = async (req, res) => {
+  log.info("request.start", {
+    action: "getCollegeDetails",
+    actorId: req.user?.id,
+    role: req.user?.role,
+    ip: req.ip,
+    collegeId: req.params.collegeId,
+  });
+
   const { collegeId } = req.params;
 
-  const version = (await redisConnection.get(`college:${collegeId}:version`)) || 1;
+  const version =
+    (await redisConnection.get(`college:${collegeId}:version`)) || 1;
 
   const cacheKey = `college:${collegeId}}:v${version}`;
   const cached = await redisConnection.get(cacheKey);
+
   if (cached) {
+    log.info("getCollege.cache.hit", {
+      collegeId,
+    });
+
     return res.json(
       new ApiResponse(200, JSON.parse(cached), "college details(cached)"),
     );
   }
+
+  log.info("getCollege.cache.miss", {
+    collegeId,
+  });
 
   let college = await prisma.college.findUnique({
     where: { id: collegeId },
@@ -862,7 +1272,14 @@ const getCollegeDetails = async (req, res) => {
       },
     },
   });
-  if (!college) throw new ApiError(404, "no such college found");
+
+  if (!college) {
+    log.warn("getCollege.not_found", {
+      collegeId,
+    });
+
+    throw new ApiError(404, "no such college found");
+  }
 
   college = {
     ...college,
@@ -870,30 +1287,68 @@ const getCollegeDetails = async (req, res) => {
   };
   college.collabs = undefined;
 
-  await redisConnection.setex(cacheKey,60,JSON.stringify(college))
+  await redisConnection.setex(cacheKey, 60, JSON.stringify(college));
+
+  log.info("getCollege.cache.set", {
+    collegeId,
+    ttl: 60,
+  });
+
+  log.info("request.success", {
+    action: "getCollegeDetails",
+    collegeId,
+  });
 
   res.json(new ApiResponse(200, college, "college details"));
 };
 
+
 const getAllJobs = asyncHandler(async (req, res) => {
+  log.info("request.start", {
+    action: "getAllJobs",
+    actorId: req.user.id,
+    role: req.user.role,
+    ip: req.ip,
+  });
+
   const company = await prisma.company.findUnique({
     where: { email: req.user.email },
-    select:{id:true}
+    select: { id: true },
   });
   if (!company) throw new ApiError(404, "no such company found");
+
+  log.info("getJobs.company.resolved", {
+    companyId: company.id,
+  });
 
   const { page, limit, skip } = getPagination(req.query);
   let { filter = "current" } = req.query;
 
-  const version = (await redisConnection.get(`company:${company.id}:jobs:version`)) || 1;
+  const version =
+    (await redisConnection.get(`company:${company.id}:jobs:version`)) || 1;
 
   const cacheKey = `company:${company.id}:jobs:v${version}:filter:${filter}:page:${page}:limit:${limit}`;
   const cached = await redisConnection.get(cacheKey);
+
   if (cached) {
+    log.info("getJobs.cache.hit", {
+      companyId: company.id,
+      filter,
+      page,
+      limit,
+    });
+
     return res.json(
       new ApiResponse(200, JSON.parse(cached), "company jobs(cached)"),
     );
   }
+
+  log.info("getJobs.cache.miss", {
+    companyId: company.id,
+    filter,
+    page,
+    limit,
+  });
 
   const whereClause = {
     companyId: company.id,
@@ -906,12 +1361,12 @@ const getAllJobs = asyncHandler(async (req, res) => {
   if (filter === "accepted") whereClause.isApproved = true;
   if (filter === "pending") whereClause.isApproved = false;
 
-  let [jobs,totalJobs]=await prisma.$transaction([
+  let [jobs, totalJobs] = await prisma.$transaction([
     prisma.job.findMany({
       where: whereClause,
-      skip:skip,
-      take:limit,
-      orderBy:{createdAt:"desc"},
+      skip: skip,
+      take: limit,
+      orderBy: { createdAt: "desc" },
       select: {
         id: true,
         title: true,
@@ -928,12 +1383,20 @@ const getAllJobs = asyncHandler(async (req, res) => {
       },
     }),
 
-    prisma.job.count({where:whereClause})
-  ])
-  jobs=jobs.map((job)=>({
+    prisma.job.count({ where: whereClause }),
+  ]);
+
+  jobs = jobs.map((job) => ({
     ...job,
-    status:filter
-  }))
+    status: filter,
+  }));
+
+  log.info("getJobs.query.executed", {
+    companyId: company.id,
+    filter,
+    returnedCount: jobs.length,
+    totalJobs,
+  });
 
   const responsePayLoad = {
     jobs,
@@ -947,28 +1410,60 @@ const getAllJobs = asyncHandler(async (req, res) => {
     },
   };
 
-  await redisConnection.setex(cacheKey,60,JSON.stringify(responsePayLoad))
+  await redisConnection.setex(cacheKey, 60, JSON.stringify(responsePayLoad));
 
-  res.json(
-    new ApiResponse(
-      200,
-      responsePayLoad,
-      "all jobs"
-    )
-  );
+  log.info("getJobs.cache.set", {
+    companyId: company.id,
+    filter,
+    page,
+    limit,
+    ttl: 60,
+  });
+
+  log.info("request.success", {
+    action: "getAllJobs",
+    companyId: company.id,
+    filter,
+    returnedCount: jobs.length,
+  });
+
+  res.json(new ApiResponse(200, responsePayLoad, "all jobs"));
 });
 
+
 const getAllSkills = asyncHandler(async (req, res) => {
+  log.info("request.start", {
+    action: "getAllSkills",
+    actorId: req.user.id,
+    role: req.user.role,
+    ip: req.ip,
+  });
+
   const { search, sortBy = "name", sortOrder = "desc" } = req.query;
+
   const version = (await redisConnection.get(`company:skills:version`)) || 1;
 
   const cacheKey = `company:skills:v${version}:filter:${search}:sortBy:${sortBy}:sortOrder:${sortOrder}`;
   const cached = await redisConnection.get(cacheKey);
+
   if (cached) {
+    log.info("getSkills.cache.hit", {
+      search,
+      sortBy,
+      sortOrder,
+    });
+
     return res.json(
       new ApiResponse(200, JSON.parse(cached), "all skills(cached)"),
     );
   }
+
+  log.info("getSkills.cache.miss", {
+    search,
+    sortBy,
+    sortOrder,
+  });
+
   const skills = await prisma.skill.findMany({
     where: {
       name: { contains: search, mode: "insensitive" },
@@ -978,30 +1473,74 @@ const getAllSkills = asyncHandler(async (req, res) => {
     },
   });
 
-  await redisConnection.setex(cacheKey,60,JSON.stringify(skills))
+  log.info("getSkills.query.executed", {
+    returnedCount: skills.length,
+    search,
+    sortBy,
+    sortOrder,
+  });
+
+  await redisConnection.setex(cacheKey, 60, JSON.stringify(skills));
+
+  log.info("getSkills.cache.set", {
+    ttl: 60,
+    search,
+    sortBy,
+    sortOrder,
+  });
+
+  log.info("request.success", {
+    action: "getAllSkills",
+    returnedCount: skills.length,
+  });
 
   res.json(new ApiResponse(200, skills, "all skills"));
 });
 
+
 const getJobDetails = asyncHandler(async (req, res) => {
+  log.info("request.start", {
+    action: "getJobDetails",
+    actorId: req.user.id,
+    role: req.user.role,
+    ip: req.ip,
+    jobId: req.params.jobId,
+  });
+
   const { jobId } = req.params;
   if (!jobId) throw new ApiError(403, "please provide job id");
 
   const company = await prisma.company.findUnique({
     where: { email: req.user.email },
-    select:{id:true}
+    select: { id: true },
   });
   if (!company) throw new ApiError(404, "no such company found");
 
-  const version = (await redisConnection.get(`company:job:${jobId}:version`)) || 1;
+  log.info("getJob.company.resolved", {
+    companyId: company.id,
+  });
+
+  const version =
+    (await redisConnection.get(`company:job:${jobId}:version`)) || 1;
 
   const cacheKey = `company:job:${jobId}:v${version}`;
   const cached = await redisConnection.get(cacheKey);
+
   if (cached) {
+    log.info("getJob.cache.hit", {
+      jobId,
+      companyId: company.id,
+    });
+
     return res.json(
       new ApiResponse(200, JSON.parse(cached), "job details(cached)"),
     );
   }
+
+  log.info("getJob.cache.miss", {
+    jobId,
+    companyId: company.id,
+  });
 
   const job = await prisma.job.findUnique({
     where: { id: jobId },
@@ -1046,28 +1585,43 @@ const getJobDetails = asyncHandler(async (req, res) => {
       },
     },
   });
-  if (!job) throw new ApiError(404, "no such job found");
-  if (job.companyId !== company.id)
+
+  if (!job) {
+    log.warn("getJob.not_found", {
+      jobId,
+    });
+
+    throw new ApiError(404, "no such job found");
+  }
+
+  if (job.companyId !== company.id) {
+    log.warn("getJob.forbidden", {
+      jobId,
+      companyId: company.id,
+      jobCompanyId: job.companyId,
+    });
+
     throw new ApiError(403, "job not belongs to your company");
+  }
 
   const shortlistedCandidates = job.applications.filter(
-    (application) => application.status === "shortlisted"
+    (application) => application.status === "shortlisted",
   );
   const rejectedCandidates = job.applications.filter(
-    (application) => application.status === "rejected"
+    (application) => application.status === "rejected",
   );
   const hiredCandidates = job.applications.filter(
-    (application) => application.status === "hired"
+    (application) => application.status === "hired",
   );
   const pendingCandidates = job.applications.filter(
-    (application) => application.status === "pending"
+    (application) => application.status === "pending",
   );
 
   job.applications = {
-    shortlistedCandidates: shortlistedCandidates,
-    rejectedCandidates: rejectedCandidates,
-    hiredCandidates: hiredCandidates,
-    pendingCandidates: pendingCandidates,
+    shortlistedCandidates,
+    rejectedCandidates,
+    hiredCandidates,
+    pendingCandidates,
   };
 
   const applicationCount = {
@@ -1083,17 +1637,48 @@ const getJobDetails = asyncHandler(async (req, res) => {
     applicationCount.hired +
     applicationCount.pending;
 
-  await redisConnection.setex(cacheKey,60,JSON.stringify({...job,applicationCount}))
+  log.info("getJob.applications.aggregated", {
+    jobId,
+    applicationCount,
+  });
+
+  await redisConnection.setex(
+    cacheKey,
+    60,
+    JSON.stringify({ ...job, applicationCount }),
+  );
+
+  log.info("getJob.cache.set", {
+    jobId,
+    ttl: 60,
+  });
+
+  log.info("request.success", {
+    action: "getJobDetails",
+    jobId,
+  });
 
   res.json(new ApiResponse(200, { ...job, applicationCount }, "job details"));
 });
 
+
 const exportEmployees = asyncHandler(async (req, res) => {
+  log.info("request.start", {
+    action: "exportEmployees",
+    actorId: req.user.id,
+    role: req.user.role,
+    ip: req.ip,
+  });
+
   const company = await prisma.company.findUnique({
     where: { email: req.user.email },
-    select:{id:true}
+    select: { id: true },
   });
   if (!company) throw new ApiError(404, "no such company found");
+
+  log.info("exportEmployees.company.resolved", {
+    companyId: company.id,
+  });
 
   const employees = await prisma.employee.findMany({
     where: { companyId: company.id },
@@ -1109,6 +1694,11 @@ const exportEmployees = asyncHandler(async (req, res) => {
     },
   });
 
+  log.info("exportEmployees.query.executed", {
+    companyId: company.id,
+    totalEmployees: employees.length,
+  });
+
   const data = [
     ["ID", "NAME", "EMAIL", "HIRE DATE"],
     ...employees.map((e) => [
@@ -1121,12 +1711,23 @@ const exportEmployees = asyncHandler(async (req, res) => {
 
   const csv = data.map((row) => row.join(",")).join("\n");
 
+  log.info("exportEmployees.csv.generated", {
+    companyId: company.id,
+    rows: data.length - 1,
+  });
+
+  log.info("request.success", {
+    action: "exportEmployees",
+    companyId: company.id,
+  });
+
   res
     .setHeader("Content-Type", "text/csv; charset=utf-8")
     .setHeader("Content-Disposition", "attachment; filename=employees.csv")
     .setHeader("Cache-Control", "no-store")
     .send("\uFEFF" + csv);
 });
+
 
 export {
   createEmployee,
