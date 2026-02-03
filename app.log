@@ -1,0 +1,8 @@
+{"timestamp":"2026-02-03T09:25:59.225Z","level":"info","message":"registerCompany request received","requestId":"5eca4e79-a1de-494d-915d-9f878124464b","email":"tcs@gmail.com","ip":"::1"}
+{"timestamp":"2026-02-03T09:25:59.411Z","level":"error","message":"registerCompany failed","requestId":"5eca4e79-a1de-494d-915d-9f878124464b","email":"tcs@gmail.com","error":"tx is not defined"}
+{"timestamp":"2026-02-03T09:27:51.978Z","level":"info","message":"registerCompany request received","requestId":"0d3b8f8d-4335-4970-8d02-a2b636d873f9","email":"tcs@gmail.com","ip":"::1"}
+{"timestamp":"2026-02-03T09:27:52.054Z","level":"warn","message":"registerCompany duplicate email attempt","requestId":"0d3b8f8d-4335-4970-8d02-a2b636d873f9","email":"tcs@gmail.com"}
+{"timestamp":"2026-02-03T09:31:10.350Z","level":"info","message":"registerCompany request received","requestId":"eabcc049-8658-4904-94eb-5251c06ecdfa","email":"tcss@gmail.com","ip":"::1"}
+{"timestamp":"2026-02-03T09:31:10.491Z","level":"info","message":"registerCompany DB transaction completed","requestId":"eabcc049-8658-4904-94eb-5251c06ecdfa","companyId":"12a91011-7fdf-40d2-9c33-458034862d85","adminId":"3da615ce-4637-4482-aea2-e19bd9fcf1c5","durationMs":140}
+{"timestamp":"2026-02-03T09:31:10.510Z","level":"info","message":"registerCompany email queued","requestId":"eabcc049-8658-4904-94eb-5251c06ecdfa","companyId":"12a91011-7fdf-40d2-9c33-458034862d85","email":"tcss@gmail.com"}
+{"timestamp":"2026-02-03T09:31:10.517Z","level":"info","message":"registerCompany completed successfully","requestId":"eabcc049-8658-4904-94eb-5251c06ecdfa","companyId":"12a91011-7fdf-40d2-9c33-458034862d85","adminId":"3da615ce-4637-4482-aea2-e19bd9fcf1c5"}
