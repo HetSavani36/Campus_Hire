@@ -660,7 +660,7 @@ const getJobsList = asyncHandler(async (req, res) => {
   });
 
   const version =
-    (await redisConnection.get(`college:${student.collegeId}:jobs:version`)) ||
+    Number(await redisConnection.get(`college:${student.collegeId}:jobs:version`)) ||
     1;
 
   const cacheKey = `college:${student.collegeId}:jobs:v${version}:filter:${filter}:page:${page}:limit:${limit}`;
@@ -881,7 +881,7 @@ const getJobDetail = asyncHandler(async (req, res) => {
   });
 
   const version =
-    (await redisConnection.get(`company:job:${jobId}:version`)) || 1;
+    Number(await redisConnection.get(`company:job:${jobId}:version`)) || 1;
 
   const cacheKey = `company:job:${jobId}}:v${version}`;
   const cached = await redisConnection.get(cacheKey);

@@ -347,6 +347,7 @@ const login = asyncHandler(async (req, res) => {
     durationMs: Date.now() - sessionStart,
   });
 
+  if(user.role!=="student") user.hasCompletedProfile=undefined
   user.password = undefined;
   const accessToken = generateAccessToken(user);
 
