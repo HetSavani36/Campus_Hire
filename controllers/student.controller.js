@@ -8,6 +8,8 @@ import { emailOptions, emailQueue } from "../queues/email-queue.js";
 import csv from "csv-parser";
 import { redisConnection } from "../config/redis.js";
 import { log } from "../utils/logger.js";
+import { getPagination } from "../utils/pagination.js";
+
 
 const prisma = new PrismaClient();
 

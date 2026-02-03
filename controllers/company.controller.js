@@ -1,7 +1,7 @@
 import { asyncHandler } from "../utils/asyncHandler.js";
 import ApiError from "../utils/ApiError.js";
 import ApiResponse from "../utils/ApiResponse.js";
-
+import { getPagination } from "../utils/pagination.js";
 import { PrismaClient } from "@prisma/client";
 import { generatePassword, hashPassword } from "../utils/password.util.js";
 import { emailOptions, emailQueue } from "../queues/email-queue.js";
