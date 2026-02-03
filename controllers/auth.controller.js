@@ -589,6 +589,8 @@ const getMe = asyncHandler(async (req, res) => {
     hasCompletedProfile: user.hasCompletedProfile,
   });
 
+  if(user.role!=="student") user.hasCompletedProfile=undefined
+
   res.json(new ApiResponse(200, user, "user profile"));
 });
 
