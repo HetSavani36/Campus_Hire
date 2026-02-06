@@ -4,3 +4,4 @@ uploads/
 /generated/prisma
 
 /generated/prisma
+app.log

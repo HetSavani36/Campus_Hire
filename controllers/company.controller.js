@@ -1,7 +1,7 @@
 import { asyncHandler } from "../utils/asyncHandler.js";
 import ApiError from "../utils/ApiError.js";
 import ApiResponse from "../utils/ApiResponse.js";
-
+import { getPagination } from "../utils/pagination.js";
 import { PrismaClient } from "@prisma/client";
 import { generatePassword, hashPassword } from "../utils/password.util.js";
 import { emailOptions, emailQueue } from "../queues/email-queue.js";
@@ -810,7 +810,7 @@ const getEmployeesList = asyncHandler(async (req, res) => {
   });
 
   const version =
-    (await redisConnection.get(`company:${company.id}:employees:version`)) || 1;
+    Number(await redisConnection.get(`company:${company.id}:employees:version`)) || 1;
 
   const cacheKey = `company:${company.id}:employees:v${version}:filter:${search}:page:${page}:limit:${limit}`;
   const cached = await redisConnection.get(cacheKey);
@@ -932,7 +932,7 @@ const getEmployeeDetail = asyncHandler(async (req, res) => {
   });
 
   const version =
-    (await redisConnection.get(`employee:${employeeId}:version`)) || 1;
+    Number(await redisConnection.get(`employee:${employeeId}:version`)) || 1;
 
   const cacheKey = `employee:${employeeId}}:v${version}`;
   const cached = await redisConnection.get(cacheKey);
@@ -1041,7 +1041,7 @@ const getAllColleges = asyncHandler(async (req, res) => {
     companyId: company.id,
   });
 
-  const version = (await redisConnection.get(`colleges:version`)) || 1;
+  const version = Number(await redisConnection.get(`colleges:version`)) || 1;
 
   const cacheKey = `colleges:v${version}:filter:${filter}:page:${page}:limit:${limit}`;
   const cached = await redisConnection.get(cacheKey);
@@ -1238,7 +1238,7 @@ const getCollegeDetails = async (req, res) => {
   const { collegeId } = req.params;
 
   const version =
-    (await redisConnection.get(`college:${collegeId}:version`)) || 1;
+    Number(await redisConnection.get(`college:${collegeId}:version`)) || 1;
 
   const cacheKey = `college:${collegeId}}:v${version}`;
   const cached = await redisConnection.get(cacheKey);
@@ -1325,7 +1325,7 @@ const getAllJobs = asyncHandler(async (req, res) => {
   let { filter = "current" } = req.query;
 
   const version =
-    (await redisConnection.get(`company:${company.id}:jobs:version`)) || 1;
+    Number(await redisConnection.get(`company:${company.id}:jobs:version`)) || 1;
 
   const cacheKey = `company:${company.id}:jobs:v${version}:filter:${filter}:page:${page}:limit:${limit}`;
   const cached = await redisConnection.get(cacheKey);
@@ -1441,7 +1441,7 @@ const getAllSkills = asyncHandler(async (req, res) => {
 
   const { search, sortBy = "name", sortOrder = "desc" } = req.query;
 
-  const version = (await redisConnection.get(`company:skills:version`)) || 1;
+  const version = Number(await redisConnection.get(`company:skills:version`)) || 1;
 
   const cacheKey = `company:skills:v${version}:filter:${search}:sortBy:${sortBy}:sortOrder:${sortOrder}`;
   const cached = await redisConnection.get(cacheKey);
@@ -1521,7 +1521,7 @@ const getJobDetails = asyncHandler(async (req, res) => {
   });
 
   const version =
-    (await redisConnection.get(`company:job:${jobId}:version`)) || 1;
+    Number(await redisConnection.get(`company:job:${jobId}:version`)) || 1;
 
   const cacheKey = `company:job:${jobId}:v${version}`;
   const cached = await redisConnection.get(cacheKey);

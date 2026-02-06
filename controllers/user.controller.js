@@ -5,6 +5,7 @@ import ApiError from "../utils/ApiError.js";
 import ApiResponse from "../utils/ApiResponse.js";
 import { emailOptions, emailQueue } from "../queues/email-queue.js";
 import { log } from "../utils/logger.js";
+
 const prisma=new PrismaClient()
 
 const changePassword = asyncHandler(async (req, res) => {

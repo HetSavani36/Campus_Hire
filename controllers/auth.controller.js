@@ -205,26 +205,26 @@ const registerCompany = asyncHandler(async (req, res) => {
           contactNo: contactNo,
         },
       });
-    });
 
-    const hashedPassword = await hashPassword(password);
+      const hashedPassword = await hashPassword(password);
 
-    companyAdmin = await tx.user.create({
-      data: {
-        name: name.toUpperCase(),
-        email: email,
-        password: hashedPassword,
-        role: "companyAdmin",
-      },
-    });
+      companyAdmin = await tx.user.create({
+        data: {
+          name: name.toUpperCase(),
+          email: email,
+          password: hashedPassword,
+          role: "companyAdmin",
+        },
+      });
 
-    companyAdmin.password = undefined;
+      companyAdmin.password = undefined;
 
-    log.info("registerCompany DB transaction completed", {
-      requestId: req.requestId,
-      companyId: company.id,
-      adminId: companyAdmin.id,
-      durationMs: Date.now() - txStart,
+      log.info("registerCompany DB transaction completed", {
+        requestId: req.requestId,
+        companyId: company.id,
+        adminId: companyAdmin.id,
+        durationMs: Date.now() - txStart,
+      });
     });
   } catch (err) {
     if (err.code === "P2002") {
@@ -241,7 +241,7 @@ const registerCompany = asyncHandler(async (req, res) => {
       error: err.message,
     });
 
-    throw new ApiError(409, err);
+    throw new ApiError(409, err.message);
   }
 
   await emailQueue.add(
@@ -347,6 +347,7 @@ const login = asyncHandler(async (req, res) => {
     durationMs: Date.now() - sessionStart,
   });
 
+  if(user.role!=="student") user.hasCompletedProfile=undefined
   user.password = undefined;
   const accessToken = generateAccessToken(user);
 
@@ -588,6 +589,8 @@ const getMe = asyncHandler(async (req, res) => {
     role: user.role,
     hasCompletedProfile: user.hasCompletedProfile,
   });
+
+  if(user.role!=="student") user.hasCompletedProfile=undefined
 
   res.json(new ApiResponse(200, user, "user profile"));
 });

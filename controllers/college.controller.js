@@ -826,7 +826,7 @@ const getMentorsList = asyncHandler(async (req, res) => {
   }
 
   const version =
-    (await redisConnection.get(`college:${college.id}:mentors:version`)) || 1;
+    Number(await redisConnection.get(`college:${college.id}:mentors:version`)) || 1;
 
   const cacheKey = `college:${college.id}:mentors:v${version}:filter:${filter}:page:${page}:limit:${limit}`;
 
@@ -997,7 +997,7 @@ const mentorDetails = asyncHandler(async (req, res) => {
   }
 
   const version =
-    (await redisConnection.get(`mentor:${mentorId}:version`)) || 1;
+    Number(await redisConnection.get(`mentor:${mentorId}:version`)) || 1;
 
   const cacheKey = `mentor:${mentorId}:v${version}:filter:${filter}`;
 
@@ -1132,7 +1132,7 @@ const getAllCollabRequests = asyncHandler(async (req, res) => {
   }
 
   const version =
-    (await redisConnection.get(
+    Number(await redisConnection.get(
       `college:${college.id}:collab:requests:version`,
     )) || 1;
 
@@ -1234,7 +1234,7 @@ const getCompanyDetails = asyncHandler(async (req, res) => {
   });
 
   const version =
-    (await redisConnection.get(`company:${companyId}:version`)) || 1;
+    Number(await redisConnection.get(`company:${companyId}:version`)) || 1;
 
   const cacheKey = `company:${companyId}:v${version}`;
 
@@ -1335,7 +1335,7 @@ const getAllJobRequests = asyncHandler(async (req, res) => {
   }
 
   const version =
-    (await redisConnection.get(`college:${college.id}:job:requests:version`)) ||
+    Number(await redisConnection.get(`college:${college.id}:job:requests:version`)) ||
     1;
 
   const cacheKey = `college:${college.id}:job:requests:v${version}:filter:${filter}:page:${page}:limit:${limit}`;
@@ -1501,7 +1501,7 @@ const getJobDetails = asyncHandler(async (req, res) => {
     throw new ApiError(404, "no such college found");
   }
 
-  const version = (await redisConnection.get(`job:${jobId}:version`)) || 1;
+  const version = Number(await redisConnection.get(`job:${jobId}:version`)) || 1;
 
   const cacheKey = `job:${jobId}:v${version}`;
   const cached = await redisConnection.get(cacheKey);
