@@ -999,6 +999,35 @@ const getJobDetail = asyncHandler(async (req, res) => {
   res.json(new ApiResponse(200, job, "job details"));
 });
 
+const getStudentList=asyncHandler(async(req,res)=>{
+  const college = await prisma.college.findUnique({
+    where: { email: req.user.email },
+    select: { id: true },
+  });
+  if (!college) throw new ApiError(404, "College not found");
+
+  const students=await prisma.student.findMany({
+    where:{
+      college:{id:college.id}
+    },
+    select:{
+      rollNo:true,
+      user:{
+        select:{
+          email:true,
+          id:true,
+          name:true
+        }
+      },
+      branch:true,
+      skills:true
+    }
+  })
+
+  res.json(
+    new ApiResponse(200,students,"students fetched!")
+  )
+})
 
 export {
   uploadBulkStudents,
@@ -1008,4 +1037,5 @@ export {
   apply,
   getJobsList,
   getJobDetail,
+  getStudentList
 };

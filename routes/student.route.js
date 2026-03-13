@@ -3,7 +3,7 @@ import { verifyJWT } from "../middlewares/auth.middleware.js";
 import authorizeRole from "../middlewares/authorizableRole.js";
 import hasCompletedProfile from "../middlewares/hasCompleteProfile.middleware.js";
 import upload from "../middlewares/multer.middleware.js"
-import { addSkill, apply, createProfile, editProfile, getJobDetail, getJobsList, uploadBulkStudents } from "../controllers/student.controller.js";
+import { addSkill, apply, createProfile, editProfile, getJobDetail, getJobsList, getStudentList, uploadBulkStudents } from "../controllers/student.controller.js";
 import { rateLimitAddSkillForStudent, rateLimitApplyInJob, rateLimitCreateStudentProfile, rateLimitEditStudentProfile, rateLimitJobDetailsForStudent, rateLimitJobsForStudent, rateLimitUploadBulkStudents } from "../middlewares/rateLimit.js";
 import { requestIdMiddleware } from "../middlewares/requestId.js";
 
@@ -19,5 +19,6 @@ router.post("/apply/:jobId", authorizeRole("student"),hasCompletedProfile,rateLi
 
 router.get("/jobs", authorizeRole("student"),hasCompletedProfile,rateLimitJobsForStudent,getJobsList);
 router.get("/job/:jobId", authorizeRole("student"),hasCompletedProfile,rateLimitJobDetailsForStudent,getJobDetail);
+router.get("/", authorizeRole("collegeAdmin"),getStudentList);
 
 export default router;
