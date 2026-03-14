@@ -16,6 +16,7 @@ import {
   getJobDetails,
   getCollegeDetails,
   exportEmployees,
+  getCompanyDetails,
 } from "../controllers/company.controller.js";
 import { rateLimitAddSkillForCompany, rateLimitCollabRequest, rateLimitCollegeDetailsForCompany, rateLimitCollegesForCompany, rateLimitCompanyResetPassword, rateLimitCreateEmployee, rateLimitEmployeeDetailsForCompany, rateLimitEmployeesForCompany, rateLimitExportEmployees, rateLimitJobDetailsForCompany, rateLimitJobsForCompany, rateLimitPostJob, rateLimitSkillsForCompany, rateLimitStudentApplicationDecisionForCompany } from "../middlewares/rateLimit.js";
 import { requestIdMiddleware } from "../middlewares/requestId.js";
@@ -42,7 +43,9 @@ router.get("/college/:collegeId",authorizeRole("companyAdmin"),rateLimitCollegeD
 
 router.get("/skills",authorizeRole("companyAdmin","employee"),rateLimitSkillsForCompany,getAllSkills);
 router.get("/jobs", authorizeRole("companyAdmin"),rateLimitJobsForCompany,getAllJobs);
-router.get("/job/:jobId", authorizeRole("companyAdmin"),rateLimitJobDetailsForCompany,getJobDetails);
+router.get("/job/:jobId",authorizeRole("companyAdmin"),getJobDetails)
+
+router.get("/profile", authorizeRole("companyAdmin"),getCompanyDetails);
 
 
 export default router

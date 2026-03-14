@@ -1729,6 +1729,17 @@ const exportEmployees = asyncHandler(async (req, res) => {
 });
 
 
+const getCompanyDetails=asyncHandler(async(req,res)=>{
+  const company=await prisma.company.findUnique({
+    where:{email:req.user.email},
+  })
+  if(!company) throw new ApiError(403,"no such company found")
+
+  res.json(
+    new ApiResponse(200,company,"company details")
+  )
+})
+
 export {
   createEmployee,
   collabWithCollege,
@@ -1744,4 +1755,5 @@ export {
   getJobDetails,
   getCollegeDetails,
   exportEmployees,
+  getCompanyDetails,
 };
