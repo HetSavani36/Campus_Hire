@@ -228,7 +228,7 @@ const createProfile = asyncHandler(async (req, res) => {
 
     await tx.user.updateMany({
       where: { id: user.id, hasCompletedProfile: false },
-      data: { hasCompletedProfile: true },
+      data: { hasCompletedProfile: true, metadata:"" },
     });
 
     log.info("createProfile.user.updated", {
@@ -999,35 +999,106 @@ const getJobDetail = asyncHandler(async (req, res) => {
   res.json(new ApiResponse(200, job, "job details"));
 });
 
-const getStudentList=asyncHandler(async(req,res)=>{
+
+const getStudentList = asyncHandler(async (req, res) => {
+  let { filter, sortBy = "name", sortOrder = 1 } = req.query;
+
+  if (!["branch", "status"].includes(filter)) filter = "";
+  if (!["name", "email", "branch"].includes(sortBy)) sortBy = "name";
+
+  sortOrder = Number(sortOrder) === -1 ? -1 : 1;
+
   const college = await prisma.college.findUnique({
     where: { email: req.user.email },
     select: { id: true },
   });
+
   if (!college) throw new ApiError(404, "College not found");
 
-  const students=await prisma.student.findMany({
-    where:{
-      college:{id:college.id}
-    },
-    select:{
-      rollNo:true,
-      user:{
-        select:{
-          email:true,
-          id:true,
-          name:true
-        }
-      },
-      branch:true,
-      skills:true
-    }
-  })
+  /* ---------- COMPLETED STUDENTS ---------- */
 
-  res.json(
-    new ApiResponse(200,students,"students fetched!")
-  )
-})
+  let completedStudents = await prisma.student.findMany({
+    where: {
+      collegeId: college.id,
+    },
+    select: {
+      rollNo: true,
+      branch: true,
+      skills: true,
+      user: {
+        select: {
+          id: true,
+          name: true,
+          email: true,
+        },
+      },
+    },
+  });
+
+  completedStudents = completedStudents.map((student) => ({
+    rollNo: student.rollNo,
+    id: student.user.id,
+    name: student.user.name,
+    email: student.user.email,
+    branch: student.branch,
+    skills: student.skills,
+    status: "completed",
+  }));
+
+  /* ---------- PENDING STUDENTS ---------- */
+
+  let pendingStudents = await prisma.user.findMany({
+    where: {
+      metadata: {
+        path: ["collegeId"],
+        equals: college.id,
+      },
+    },
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      metadata: true,
+    },
+  });
+
+  pendingStudents = pendingStudents.map((student) => ({
+    id: student.id,
+    name: student.name,
+    email: student.email,
+    skills: [],
+    status: "pending",
+  }));
+
+  /* ---------- MERGE ---------- */
+
+  let students = [...completedStudents, ...pendingStudents];
+
+  /* ---------- FILTER ---------- */
+
+  if (filter === "branch") {
+    const branch = req.query.branch;
+    students = students.filter((s) => s.branch === branch);
+  }
+
+  if (filter === "status") {
+    const status = req.query.status;
+    students = students.filter((s) => s.status === status);
+  }
+
+  /* ---------- SORT ---------- */
+
+  students = students.sort((a, b) => {
+    const valA = (a[sortBy] || "").toString().toLowerCase();
+    const valB = (b[sortBy] || "").toString().toLowerCase();
+
+    if (valA < valB) return -1 * sortOrder;
+    if (valA > valB) return 1 * sortOrder;
+    return 0;
+  });
+
+  res.json(new ApiResponse(200, students, "students fetched!"));
+});
 
 export {
   uploadBulkStudents,
