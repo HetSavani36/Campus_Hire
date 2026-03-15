@@ -17,6 +17,11 @@ import {
   getCollegeDetails,
   exportEmployees,
   getCompanyDetails,
+  getApplicationsOverview,
+  getJobPipeline,
+  makeFinalDecision,
+  getCompanyDashboard,
+  editCompanyProfile,
 } from "../controllers/company.controller.js";
 import { rateLimitAddSkillForCompany, rateLimitCollabRequest, rateLimitCollegeDetailsForCompany, rateLimitCollegesForCompany, rateLimitCompanyResetPassword, rateLimitCreateEmployee, rateLimitEmployeeDetailsForCompany, rateLimitEmployeesForCompany, rateLimitExportEmployees, rateLimitJobDetailsForCompany, rateLimitJobsForCompany, rateLimitPostJob, rateLimitSkillsForCompany, rateLimitStudentApplicationDecisionForCompany } from "../middlewares/rateLimit.js";
 import { requestIdMiddleware } from "../middlewares/requestId.js";
@@ -28,12 +33,12 @@ router.use(requestIdMiddleware)
 
 router.post("/create/employee",authorizeRole("companyAdmin"),rateLimitCreateEmployee,createEmployee);
 router.post("/collab/:collegeId",authorizeRole("companyAdmin"),rateLimitCollabRequest,collabWithCollege);
-router.post("/reset-password/:userId",authorizeRole("companyAdmin"),rateLimitCompanyResetPassword,resetPassword);
+router.post("/reset-password/:userEmail",authorizeRole("companyAdmin"),rateLimitCompanyResetPassword,resetPassword);
 
 router.post("/create/job",authorizeRole("companyAdmin"),rateLimitPostJob,postJob);
 router.post("/add/skill",authorizeRole("companyAdmin","employee"),rateLimitAddSkillForCompany,addSkill);
 
-router.post("/application/:applicationId",authorizeRole("employee"),rateLimitStudentApplicationDecisionForCompany,makeStudentApplicationDecision);
+router.post("/application/:applicationId",authorizeRole("companyAdmin","employee"),rateLimitStudentApplicationDecisionForCompany,makeStudentApplicationDecision);
 
 router.get("/export/employees",authorizeRole("companyAdmin"),rateLimitExportEmployees,exportEmployees);
 router.get("/employees",authorizeRole("companyAdmin"),rateLimitEmployeesForCompany,getEmployeesList);
@@ -47,5 +52,12 @@ router.get("/job/:jobId",authorizeRole("companyAdmin"),getJobDetails)
 
 router.get("/profile", authorizeRole("companyAdmin"),getCompanyDetails);
 
+// Add these with your other routes
+router.get("/applications/overview", authorizeRole("companyAdmin", "employee"), getApplicationsOverview);
+router.get("/applications/pipeline/:jobId", authorizeRole("companyAdmin", "employee"), getJobPipeline);
+router.post("/application/:applicationId/final", authorizeRole("companyAdmin", "employee"), makeFinalDecision);
+
+router.get("/dashboard", authorizeRole("companyAdmin", "employee"), getCompanyDashboard);
+router.put("/profile", authorizeRole("companyAdmin"), editCompanyProfile);
 
 export default router

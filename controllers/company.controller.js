@@ -275,14 +275,14 @@ const resetPassword = asyncHandler(async (req, res) => {
     action: "resetPassword",
     actorId: req.user.id,
     role: req.user.role,
-    targetUserId: req.params.userId,
+    targetUserId: req.params.userEmail,
     ip: req.ip,
   });
 
-  const { userId } = req.params;
+  const { userEmail } = req.params;
 
   const user = await prisma.user.findUnique({
-    where: { id: userId },
+    where: { email: userEmail },
     select: {
       id: true,
       name: true,
@@ -1740,6 +1740,300 @@ const getCompanyDetails=asyncHandler(async(req,res)=>{
   )
 })
 
+
+
+
+
+
+
+
+/* ---------- ADD TO company.controller.js ---------- */
+
+const getApplicationsOverview = asyncHandler(async (req, res) => {
+  const company = await prisma.company.findUnique({
+    where: { email: req.user.email },
+    select: { id: true },
+  });
+  if (!company) throw new ApiError(404, "Company not found");
+
+  const jobs = await prisma.job.findMany({
+    where: { companyId: company.id },
+    orderBy: { createdAt: "desc" },
+    select: {
+      id: true,
+      title: true,
+      status: true,
+      isApproved:true,
+      dueDate: true,
+      college: { select: { id: true, name: true } },
+      applications: {
+        select: {
+          id: true,
+          status: true,
+          mentorApproval: true,
+        },
+      },
+    },
+  });
+
+  const overview = jobs.map((job) => {
+    const pipeline = {
+      total: job.applications.length,
+      newPending: 0,
+      mentorReview: 0,
+      interviewReady: 0,
+      hired: 0,
+      rejected: 0,
+    };
+
+    job.applications.forEach((app) => {
+      if (app.status === "pending") pipeline.newPending++;
+      else if (app.status === "shortlisted" && app.mentorApproval === "pending") pipeline.mentorReview++;
+      else if (app.status === "shortlisted" && app.mentorApproval === "approved") pipeline.interviewReady++;
+      else if (app.status === "hired") pipeline.hired++;
+      else if (app.status === "rejected" || app.mentorApproval === "rejected") pipeline.rejected++;
+    });
+
+    return {
+      id: job.id,
+      title: job.title,
+      jobStatus: job.status,
+      dueDate: job.dueDate,
+      collegeName: job.college?.name,
+      isApproved:job.isApproved,
+      pipeline,
+    };
+  });
+
+  res.json(new ApiResponse(200, overview, "Applications overview fetched"));
+});
+
+const getJobPipeline = asyncHandler(async (req, res) => {
+  const { jobId } = req.params;
+
+  const job = await prisma.job.findUnique({
+    where: { id: jobId },
+    select: {
+      id: true,
+      title: true,
+      dueDate: true, // 👈 ADD THIS
+      isApproved: true, // 👈 ADD THIS
+      status: true,
+      college: { select: { name: true } },
+      applications: {
+        orderBy: { appliedAt: "desc" },
+        select: {
+          id: true,
+          status: true,
+          mentorApproval: true,
+          appliedAt: true,
+          student: {
+            select: {
+              id: true,
+              branch: true,
+              year: true,
+              rollNo: true,
+              resume: true,
+              aboutMe: true,
+              user: { select: { name: true, email: true } },
+              skills: { select: { skill: { select: { name: true } } } },
+            },
+          },
+        },
+      },
+    },
+  });
+
+  if (!job) throw new ApiError(404, "Job not found");
+
+  res.json(new ApiResponse(200, job, "Job pipeline fetched"));
+});
+
+const makeFinalDecision = asyncHandler(async (req, res) => {
+  console.log('called');
+  
+  const { applicationId } = req.params;
+  const { result } = req.body; // "hire" or "reject"
+
+  if (!["hire", "reject"].includes(result)) {
+    throw new ApiError(400, "Result must be 'hire' or 'reject'");
+  }
+
+  const application = await prisma.application.findUnique({
+    where: { id: applicationId },
+    include: { student: { include: { user: true } }, job: { include: { company: true } } },
+  });
+
+  if (!application) throw new ApiError(404, "Application not found");
+
+  if (application.status !== "shortlisted" || application.mentorApproval !== "approved") {
+    throw new ApiError(400, "Student must be shortlisted and mentor-approved before final decision");
+  }
+
+  const nextStatus = result === "hire" ? "hired" : "rejected";
+
+  const updatedApp = await prisma.application.update({
+    where: { id: applicationId },
+    data: { status: nextStatus },
+  });
+
+  // Optional: Queue an email here telling the student they were hired/rejected
+
+  res.json(new ApiResponse(200, updatedApp, `Student has been ${nextStatus}`));
+});
+
+// Don't forget to export them at the bottom of the file!
+
+
+// Add to company.controller.js
+
+const getCompanyDashboard = asyncHandler(async (req, res) => {
+  log.info("request.start", { action: "getCompanyDashboard", actorId: req.user.id });
+
+  const company = await prisma.company.findUnique({
+    where: { email: req.user.email },
+    select: { id: true, name: true },
+  });
+
+  if (!company) throw new ApiError(404, "Company not found");
+
+  const companyId = company.id;
+
+  // Fetch all counts concurrently for performance
+  const [
+    activeJobsCount,
+    collabsCount,
+    employeeCount,
+    applicationsGrouping,
+    recentApplications,
+    recentJobs
+  ] = await Promise.all([
+    // 1. Active Jobs
+    prisma.job.count({ where: { companyId, status: "active", isApproved: true, dueDate: { gte: new Date() } } }),
+    
+    // 2. Active Collaborations
+    prisma.collab.count({ where: { companyId, status: "accepted" } }),
+    
+    // 3. Total Employees
+    prisma.employee.count({ where: { companyId } }),
+    
+    // 4. Application Pipeline Stats (Grouped by status)
+    prisma.application.groupBy({
+      by: ['status'],
+      where: { job: { companyId } },
+      _count: { id: true },
+    }),
+
+    // 5. Recent 5 Applications (for activity feed)
+    prisma.application.findMany({
+      where: { job: { companyId } },
+      orderBy: { appliedAt: 'desc' },
+      take: 5,
+      select: {
+        id: true,
+        status: true,
+        appliedAt: true,
+        student: { select: { user: { select: { name: true } }, branch: true } },
+        job: { select: { title: true } }
+      }
+    }),
+
+    // 6. Recent 3 Jobs (for quick view)
+    prisma.job.findMany({
+      where: { companyId, status: "active" },
+      orderBy: { createdAt: 'desc' },
+      take: 3,
+      select: {
+        id: true,
+        title: true,
+        applications: { select: { id: true } },
+        college: { select: { name: true } }
+      }
+    })
+  ]);
+
+  // Format the pipeline stats
+  const pipeline = { pending: 0, shortlisted: 0, hired: 0, rejected: 0, total: 0 };
+  applicationsGrouping.forEach(group => {
+    pipeline[group.status] = group._count.id;
+    pipeline.total += group._count.id;
+  });
+
+  const dashboardData = {
+    companyName: company.name,
+    metrics: {
+      activeJobs: activeJobsCount,
+      activeCollabs: collabsCount,
+      totalEmployees: employeeCount,
+    },
+    pipeline,
+    recentApplications: recentApplications.map(app => ({
+      id: app.id,
+      studentName: app.student.user.name,
+      branch: app.student.branch,
+      jobTitle: app.job.title,
+      status: app.status,
+      date: app.appliedAt
+    })),
+    recentJobs: recentJobs.map(job => ({
+      id: job.id,
+      title: job.title,
+      collegeName: job.college?.name || "N/A",
+      applicantCount: job.applications.length
+    }))
+  };
+
+  res.json(new ApiResponse(200, dashboardData, "Dashboard metrics fetched"));
+});
+
+/* ---------- ADD TO company.controller.js ---------- */
+const editCompanyProfile = asyncHandler(async (req, res) => {
+  log.info("request.start", { action: "editCompanyProfile", actorId: req.user.id });
+
+  const company = await prisma.company.findUnique({
+    where: { email: req.user.email },
+  });
+  if (!company) throw new ApiError(404, "no such company found");
+
+  const { name, address, contactNo } = req.body;
+  if (!name && !address && !contactNo) {
+    throw new ApiError(400, "provide at least one field to update");
+  }
+
+  const updates = {};
+  if (name) updates.name = name;
+  if (address) updates.address = address;
+  if (contactNo) updates.contactNo = contactNo;
+
+  // Check for name uniqueness if they are changing it
+  if (name && name !== company.name) {
+    const exists = await prisma.company.count({ where: { name } });
+    if (exists > 0) throw new ApiError(403, "Company name already in use by another organization.");
+  }
+
+  const updated = await prisma.company.update({
+    where: { id: company.id },
+    data: updates,
+    select: {
+      id: true,
+      name: true,
+      address: true,
+      email: true,
+      contactNo: true,
+    }
+  });
+
+  // Invalidate the cache for this company
+  await redisConnection.incr(`company:${company.id}:version`);
+
+  log.info("request.success", { action: "editCompanyProfile", companyId: company.id });
+  
+  res.json(new ApiResponse(200, updated, "Company profile updated successfully"));
+});
+
+// 👉 Remember to add `editCompanyProfile` to your `export { ... }` at the bottom of the file!
+// Don't forget to export getCompanyDashboard at the bottom!
+
 export {
   createEmployee,
   collabWithCollege,
@@ -1756,4 +2050,9 @@ export {
   getCollegeDetails,
   exportEmployees,
   getCompanyDetails,
+  getApplicationsOverview,
+  getJobPipeline,
+  makeFinalDecision,
+  getCompanyDashboard,
+  editCompanyProfile
 };
