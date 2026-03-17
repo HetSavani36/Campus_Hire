@@ -1756,6 +1756,22 @@ const getApplicationsOverview = asyncHandler(async (req, res) => {
   });
   if (!company) throw new ApiError(404, "Company not found");
 
+  const version = Number(await redisConnection.get(`company:applications:overview:${company.id}:version`)) || 1;
+  const cacheKey = `company:applications:overview:${company.id}:v${version}`;
+  const cached = await redisConnection.get(cacheKey);
+
+  if (cached) {
+    log.info("getApplicationsOverview cache hit", {
+      requestId: req.requestId,
+      companyId:company.id,
+      cacheKey,
+    });
+
+    return res.json(
+      new ApiResponse(200, JSON.parse(cached), "Company Application Overview(cached)"),
+    );
+  }
+
   const jobs = await prisma.job.findMany({
     where: { companyId: company.id },
     orderBy: { createdAt: "desc" },
@@ -1805,11 +1821,30 @@ const getApplicationsOverview = asyncHandler(async (req, res) => {
     };
   });
 
+  await redisConnection.setex(cacheKey, 120, JSON.stringify(overview));
+
   res.json(new ApiResponse(200, overview, "Applications overview fetched"));
 });
 
 const getJobPipeline = asyncHandler(async (req, res) => {
   const { jobId } = req.params;
+
+  const version = Number(await redisConnection.get(`company:job:pipeline:${jobId}:version`)) || 1;
+
+  const cacheKey = `company:job:pipeline:${jobId}:v${version}`;
+  const cached = await redisConnection.get(cacheKey);
+
+  if (cached) {
+    log.info("getJobPipeline cache hit", {
+      requestId: req.requestId,
+      jobId,
+      cacheKey,
+    });
+
+    return res.json(
+      new ApiResponse(200, JSON.parse(cached), "company job pipeline(cached)"),
+    );
+  }
 
   const job = await prisma.job.findUnique({
     where: { id: jobId },
@@ -1843,8 +1878,9 @@ const getJobPipeline = asyncHandler(async (req, res) => {
       },
     },
   });
-
   if (!job) throw new ApiError(404, "Job not found");
+
+  await redisConnection.setex(cacheKey, 120, JSON.stringify(job));
 
   res.json(new ApiResponse(200, job, "Job pipeline fetched"));
 });
@@ -1896,8 +1932,24 @@ const getCompanyDashboard = asyncHandler(async (req, res) => {
   });
 
   if (!company) throw new ApiError(404, "Company not found");
-
   const companyId = company.id;
+
+  const version = Number(await redisConnection.get(`company:admin:dashboard:${companyId}:version`)) || 1;
+
+  const cacheKey = `company:admin:dashboard:v${version}`;
+  const cached = await redisConnection.get(cacheKey);
+
+  if (cached) {
+    log.info("company admin dashboard cache hit", {
+      requestId: req.requestId,
+      companyId,
+      cacheKey,
+    });
+
+    return res.json(
+      new ApiResponse(200, JSON.parse(cached), "company admin dashboard(cached)"),
+    );
+  }
 
   // Fetch all counts concurrently for performance
   const [
@@ -1982,6 +2034,8 @@ const getCompanyDashboard = asyncHandler(async (req, res) => {
       applicantCount: job.applications.length
     }))
   };
+
+  await redisConnection.setex(cacheKey, 120, JSON.stringify(dashboardData));
 
   res.json(new ApiResponse(200, dashboardData, "Dashboard metrics fetched"));
 });

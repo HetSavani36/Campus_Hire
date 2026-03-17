@@ -1712,19 +1712,30 @@ const exportMentors = asyncHandler(async (req, res) => {
 });
 
 const getDashboardDetails=asyncHandler(async(req,res)=>{
-    const college=await prisma.college.findUnique({
-      where:{email:req.user.email},
-      select:{
-        id:true,
-        collabs:{
-          where:{status:"accepted"},
-          select:{id:true}
-        }
-      }
-    })
-    console.log(college);
-    
+  const college=await prisma.college.findUnique({
+    where:{email:req.user.email},
+    select:{
+      id:true,
+    }
+  })
+  if(!college) throw new ApiError(404,"college not found")
 
+  const version = Number(await redisConnection.get(`college:admin:dashboard:${college.id}:version`)) || 1;
+
+  const cacheKey = `college:admin:dashboard:${college.id}:v${version}`;
+  const cached = await redisConnection.get(cacheKey);
+
+  if (cached) {
+    log.info("college admin dashboard cache hit", {
+      requestId: req.requestId,
+      collegeId:college.id,
+      cacheKey,
+    });
+
+    return res.json(
+      new ApiResponse(200, JSON.parse(cached), "college admin dashboard(cached)"),
+    );
+  }
 
   const completedStudentsCount=await prisma.student.count({where:{collegeId:college.id}}) 
   const pendingStudentsCount = await prisma.user.count({
@@ -1736,7 +1747,14 @@ const getDashboardDetails=asyncHandler(async(req,res)=>{
     },
   }); 
   const studentsCount = completedStudentsCount + pendingStudentsCount;
-  const collaboratedCount = college.collabs.length
+  const collaboratedCount = await prisma.collab.count({
+    where: {
+      collegeId: college.id,
+      status: "accepted",
+    },
+  });
+
+  await redisConnection.setex(cacheKey, 120, JSON.stringify({studentsCount,collaboratedCount}));
 
   res.json(
     new ApiResponse(200,{studentsCount,collaboratedCount},"dashboard requirements")
