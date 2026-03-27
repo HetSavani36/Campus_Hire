@@ -23,7 +23,6 @@ export const verifyJWT = asyncHandler(async(req, _, next) => {
         }
 
         const {password,...safeUser}=user
-
         req.user = safeUser;
         next()
     } catch (error) {
