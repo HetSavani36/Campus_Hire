@@ -20,7 +20,7 @@ const changePassword = asyncHandler(async (req, res) => {
   if (!oldPassword || !newPassword)
     throw new ApiError(403, "please provide all details");
 
-  const user = await tx.user.findUnique({
+  const user = await prisma.user.findUnique({
     where: { id: req.user.id },
     select: {
       id: true,

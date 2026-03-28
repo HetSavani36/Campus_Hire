@@ -10,6 +10,6 @@ const router = Router();
 router.use(verifyJWT)
 router.use(requestIdMiddleware)
 
-router.post("/change-password",rateLimitChangePassword,changePassword)
+router.put("/change-password",rateLimitChangePassword,changePassword)
 
 export default router;

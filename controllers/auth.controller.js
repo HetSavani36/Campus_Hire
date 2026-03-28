@@ -572,6 +572,7 @@ const getMe = asyncHandler(async (req, res) => {
       name: true,
       role: true,
       hasCompletedProfile: true,
+      metadata:true
     },
   });
 

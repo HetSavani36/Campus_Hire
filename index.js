@@ -16,11 +16,7 @@ app.use(
     origin: process.env.CORS_ORIGIN,
     credentials: true,
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE"],
-    allowedHeaders: [
-      "Content-Type",
-      "Authorization",
-      "Idempotency-Key",
-    ],
+    allowedHeaders: ["Content-Type", "Authorization", "idempotency-key"],
   }),
 );
 
@@ -29,6 +25,16 @@ app.use(cookieParser());
 app.use(express.json({ limit: "16kb" }));
 app.use(express.urlencoded({ extended: true, limit: "16kb" }));
 
+app.use((req, res, next) => {
+  const label = `Request-${Date.now()}`;
+  console.time(label);
+
+  res.on("finish", () => {
+    console.timeEnd(label);
+  });
+
+  next();
+});
 
 import authRouter from "./routes/auth.route.js"
 import collegeRouter from "./routes/college.route.js";

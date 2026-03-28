@@ -298,16 +298,16 @@ const collabDecision = asyncHandler(async (req, res) => {
 
 
 const resetPassword = asyncHandler(async (req, res) => {
-  const { userId } = req.params;
+  const { userEmail } = req.params;
 
   log.info("resetPassword request received", {
     requestId: req.requestId,
     adminId: req.user.id,
-    targetUserId: userId,
+    targetUserId: userEmail,
   });
 
   const user = await prisma.user.findUnique({
-    where: { id: userId },
+    where:{email:userEmail},
     select: {
       id: true,
       email: true,
@@ -330,7 +330,7 @@ const resetPassword = asyncHandler(async (req, res) => {
   if (!user) {
     log.info("resetPassword target user not found", {
       requestId: req.requestId,
-      targetUserId: userId,
+      targetUserId: userEmail,
     });
     throw new ApiError(404, "no such user found");
   }
@@ -1711,6 +1711,106 @@ const exportMentors = asyncHandler(async (req, res) => {
   });
 });
 
+const getDashboardDetails=asyncHandler(async(req,res)=>{
+  const college=await prisma.college.findUnique({
+    where:{email:req.user.email},
+    select:{
+      id:true,
+    }
+  })
+  if(!college) throw new ApiError(404,"college not found")
+
+  const version = Number(await redisConnection.get(`college:admin:dashboard:${college.id}:version`)) || 1;
+
+  const cacheKey = `college:admin:dashboard:${college.id}:v${version}`;
+  const cached = await redisConnection.get(cacheKey);
+
+  if (cached) {
+    log.info("college admin dashboard cache hit", {
+      requestId: req.requestId,
+      collegeId:college.id,
+      cacheKey,
+    });
+
+    return res.json(
+      new ApiResponse(200, JSON.parse(cached), "college admin dashboard(cached)"),
+    );
+  }
+
+  const completedStudentsCount=await prisma.student.count({where:{collegeId:college.id}}) 
+  const pendingStudentsCount = await prisma.user.count({
+    where: {
+      metadata: {
+        path: ["collegeId"],
+        equals: college.id,
+      },
+    },
+  }); 
+  const studentsCount = completedStudentsCount + pendingStudentsCount;
+  const collaboratedCount = await prisma.collab.count({
+    where: {
+      collegeId: college.id,
+      status: "accepted",
+    },
+  });
+
+  await redisConnection.setex(cacheKey, 120, JSON.stringify({studentsCount,collaboratedCount}));
+
+  res.json(
+    new ApiResponse(200,{studentsCount,collaboratedCount},"dashboard requirements")
+  )
+})
+
+const editCollegeProfile = asyncHandler(async (req, res) => {
+  const college = await prisma.college.findUnique({
+    where: { email: req.user.email },
+  });
+  if (!college) throw new ApiError(404, "no such college found");
+
+  const { name, phone, address } = req.body;
+  if (!name && !address && !phone)
+    throw new ApiError(400, "provide any one field");
+
+  const updates = {};
+  if (name) updates.name = name;
+  if (address) updates.address = address;
+  if (phone) updates.phone = phone;
+
+  if (
+    name === college.name &&
+    address === college.address &&
+    phone === college.phone
+  ) {
+    res.json(new ApiResponse(200, college, "no changes made"));
+  }
+
+  const exists = await prisma.college.count({
+    where: { name: name },
+  });
+  if (exists > 0 && name !== college.name)
+    throw new ApiError(
+      403,
+      "there must be a unique institution name across the platform.",
+    );
+
+  const updated = await prisma.college.update({
+    where: { email: college.email },
+    data: updates,
+  });
+  console.log(updated);
+  
+  res.json(new ApiResponse(200, updated, "college details for admin settings"));
+});
+
+
+const getCollegeProfile = asyncHandler(async (req, res) => {
+  const college = await prisma.college.findUnique({
+    where: { email: req.user.email },
+  });
+  if (!college) throw new ApiError(404, "no such college found");
+
+  res.json(new ApiResponse(200, college, "college details for admin settings"));
+});
 
 export {
   createMentor,
@@ -1725,4 +1825,7 @@ export {
   getAllJobRequests,
   getJobDetails,
   exportMentors,
+  getDashboardDetails,
+  getCollegeProfile,
+  editCollegeProfile,
 };

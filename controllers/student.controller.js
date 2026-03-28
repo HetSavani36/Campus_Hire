@@ -228,7 +228,7 @@ const createProfile = asyncHandler(async (req, res) => {
 
     await tx.user.updateMany({
       where: { id: user.id, hasCompletedProfile: false },
-      data: { hasCompletedProfile: true },
+      data: { hasCompletedProfile: true, metadata:"" },
     });
 
     log.info("createProfile.user.updated", {
@@ -335,6 +335,62 @@ const editProfile = asyncHandler(async (req, res) => {
   res.json(new ApiResponse(200, user, "profile updated succeessfully"));
 });
 
+
+
+const getProfile = asyncHandler(async (req, res) => {
+  log.info("request.start", {
+    action: "getProfile",
+    actorId: req.user.id,
+    role: req.user.role,
+    ip: req.ip,
+  });
+
+  const user = await prisma.student.findUnique({
+    where: { userId: req.user.id },
+    select: {
+      id: true,
+      year: true,
+      branch: true,
+      rollNo: true,
+      resume: true,
+      aboutMe: true,
+      skills: {
+        // 👈 ADD THIS SO SKILLS LOAD ON THE FRONTEND
+        select: {
+          skill: {
+            select: { name: true },
+          },
+        },
+      },
+      user: {
+        select: {
+          name: true,
+          email: true,
+          hasCompletedProfile: true,
+        },
+      },
+      college: {
+        select: {
+          email: true,
+          name: true,
+          address: true,
+        },
+      },
+    },
+  });
+
+  if (user && user.skills) {
+    user.skills = user.skills.map((s) => s.skill.name);
+  }
+  
+  log.info("request.success", {
+    action: "getProfile",
+    userId: req.user.id,
+  });
+
+  res.json(new ApiResponse(200, user, "profile fetched succeessfully"));
+});
+
 const addSkill = asyncHandler(async (req, res) => {
   log.info("request.start", {
     action: "addSkill",
@@ -362,35 +418,23 @@ const addSkill = asyncHandler(async (req, res) => {
     skillName: normalizedName,
   });
 
+  // 👇 The transaction block is updated
   await prisma.$transaction(async (tx) => {
-    let skill;
+    // 1. Upsert completely bypasses the P2002 error.
+    // It says: "If it exists, do nothing (update: {}). If it doesn't, create it."
+    const skill = await tx.skill.upsert({
+      where: { name: normalizedName },
+      update: {},
+      create: { name: normalizedName },
+      select: { id: true },
+    });
 
-    try {
-      skill = await tx.skill.create({
-        data: { name: normalizedName },
-        select: { id: true },
-      });
+    log.info("studentSkill.skill.resolved", {
+      skillId: skill.id,
+      skillName: normalizedName,
+    });
 
-      log.info("studentSkill.skill.created", {
-        skillId: skill.id,
-        skillName: normalizedName,
-      });
-    } catch (err) {
-      if (err.code === "P2002") {
-        skill = await tx.skill.findUnique({
-          where: { name: normalizedName },
-          select: { id: true },
-        });
-
-        log.info("studentSkill.skill.exists", {
-          skillId: skill.id,
-          skillName: normalizedName,
-        });
-      } else {
-        throw err;
-      }
-    }
-
+    // 2. Link the skill to the student
     await tx.studentSkill.createMany({
       data: {
         studentId: student.id,
@@ -411,12 +455,15 @@ const addSkill = asyncHandler(async (req, res) => {
     skillName: normalizedName,
   });
 
-  res.json(new ApiResponse(201, normalizedName, "skill added successfully"));
+  res.json(
+    new ApiResponse(201, { name: normalizedName }, "skill added successfully"),
+  );
 });
 
 
-
 const apply = asyncHandler(async (req, res) => {
+  console.log("apply");
+  
   log.info("request.start", {
     action: "applyJob",
     actorId: req.user.id,
@@ -784,6 +831,7 @@ const getJobsList = asyncHandler(async (req, res) => {
       collegeId: student.collegeId,
       isApproved: true,
       mentorId: { not: null },
+      dueDate: { gte: now },
       applications: {
         none: {
           studentId: student.id,
@@ -848,6 +896,9 @@ const getJobsList = asyncHandler(async (req, res) => {
     returnedCount: jobs.length,
   });
 
+  console.log(responsePayLoad);
+  
+
   res.json(new ApiResponse(200, responsePayLoad, "student jobs"));
 });
 
@@ -867,7 +918,7 @@ const getJobDetail = asyncHandler(async (req, res) => {
 
   const student = await prisma.student.findUnique({
     where: { userId: req.user.id },
-    select: { collegeId: true },
+    select: { collegeId: true, id: true },
   });
   if (!student) throw new ApiError(404, "no such student found");
 
@@ -878,74 +929,93 @@ const getJobDetail = asyncHandler(async (req, res) => {
   const version =
     Number(await redisConnection.get(`company:job:${jobId}:version`)) || 1;
 
-  const cacheKey = `company:job:${jobId}}:v${version}`;
-  const cached = await redisConnection.get(cacheKey);
+  // 🚨 Fixed a typo here: removed the extra '}'
+  const cacheKey = `company:job:${jobId}:v${version}`;
+  const cachedJobData = await redisConnection.get(cacheKey);
 
-  if (cached) {
+  let job;
+
+  // ========================================================
+  // 1. FETCH BASE JOB DETAILS (From Cache or DB)
+  // ========================================================
+  if (cachedJobData) {
     log.info("studentJob.cache.hit", {
       jobId,
       collegeId: student.collegeId,
     });
 
-    return res.json(
-      new ApiResponse(200, JSON.parse(cached), "job requests(cached)"),
-    );
-  }
+    job = JSON.parse(cachedJobData);
+  } else {
+    log.info("studentJob.cache.miss", {
+      jobId,
+      collegeId: student.collegeId,
+    });
 
-  log.info("studentJob.cache.miss", {
-    jobId,
-    collegeId: student.collegeId,
-  });
-
-  const job = await prisma.job.findUnique({
-    where: { id: jobId },
-    select: {
-      id: true,
-      title: true,
-      salary: true,
-      tenure: true,
-      address: true,
-      dueDate: true,
-      collegeId: true,
-      createdAt: true,
-      mentorId: true,
-      status: true,
-      company: {
-        select: {
-          name: true,
-          address: true,
-          email: true,
-          contactNo: true,
+    job = await prisma.job.findUnique({
+      where: { id: jobId },
+      select: {
+        id: true,
+        title: true,
+        salary: true,
+        tenure: true,
+        address: true,
+        dueDate: true,
+        collegeId: true,
+        createdAt: true,
+        mentorId: true,
+        status: true,
+        company: {
+          select: {
+            name: true,
+            address: true,
+            email: true,
+            contactNo: true,
+          },
         },
-      },
-      mentor: {
-        select: {
-          user: {
-            select: {
-              name: true,
-              email: true,
+        mentor: {
+          select: {
+            user: {
+              select: {
+                name: true,
+                email: true,
+              },
             },
           },
         },
       },
-    },
-  });
-
-  if (!job) {
-    log.warn("studentJob.not_found", {
-      jobId,
     });
 
-    throw new ApiError(404, "no such job found");
+    if (!job) {
+      log.warn("studentJob.not_found", { jobId });
+      throw new ApiError(404, "no such job found");
+    }
+
+    // Format mentor object before caching
+    if (job.mentor) {
+      job.mentor = {
+        name: job.mentor.user.name,
+        email: job.mentor.user.email,
+      };
+    }
+
+    // 🚨 CACHE THE BASE JOB ONLY (Do not cache student-specific data here)
+    await redisConnection.setex(cacheKey, 60, JSON.stringify(job));
+
+    log.info("studentJob.cache.set", {
+      jobId,
+      ttl: 60,
+    });
   }
 
+  // ========================================================
+  // 2. BACKEND FEASIBILITY & AUTHORIZATION CHECKS
+  // ========================================================
   if (job.collegeId !== student.collegeId) {
     log.warn("studentJob.forbidden.college", {
       jobId,
       studentCollegeId: student.collegeId,
       jobCollegeId: job.collegeId,
     });
-
     throw new ApiError(403, "you cant apply to another college job");
   }
 
@@ -954,37 +1024,38 @@ const getJobDetail = asyncHandler(async (req, res) => {
       jobId,
       status: job.status,
     });
-
     throw new ApiError(403, "the job is currently not active");
   }
 
   if (job.isApproved === false) {
-    log.warn("studentJob.not_approved", {
-      jobId,
-    });
-
+    log.warn("studentJob.not_approved", { jobId });
     throw new ApiError(403, "the job is not approved by your college yet");
   }
 
   if (!job.mentorId) {
-    log.warn("studentJob.mentor.missing", {
-      jobId,
-    });
-
+    log.warn("studentJob.mentor.missing", { jobId });
     throw new ApiError(403, "your college has not yet assigned a mentor");
   }
 
-  job.mentor = {
-    name: job.mentor.user.name,
-    email: job.mentor.user.email,
-  };
-
-  await redisConnection.setex(cacheKey, 60, JSON.stringify(job));
-
-  log.info("studentJob.cache.set", {
-    jobId,
-    ttl: 60,
+  // ========================================================
+  // 3. APPEND DYNAMIC STUDENT DATA (Not Cached)
+  // ========================================================
+  const application = await prisma.application.findUnique({
+    where: {
+      studentId_jobId: {
+        studentId: student.id,
+        jobId: job.id,
+      },
+    },
+    select: {
+      status: true,
+      mentorApproval: true,
+    },
   });
+
+  // Attach dynamic data directly to the memory object before sending the response
+  job.applicationStatus = application ? application.status : null;
+  job.mentorApprovalStatus = application ? application.mentorApproval : null;
 
   log.info("request.success", {
     action: "getJobDetail",
@@ -995,6 +1066,106 @@ const getJobDetail = asyncHandler(async (req, res) => {
 });
 
 
+const getStudentList = asyncHandler(async (req, res) => {
+  let { filter, sortBy = "name", sortOrder = 1 } = req.query;
+
+  if (!["branch", "status"].includes(filter)) filter = "";
+  if (!["name", "email", "branch"].includes(sortBy)) sortBy = "name";
+
+  sortOrder = Number(sortOrder) === -1 ? -1 : 1;
+
+  const college = await prisma.college.findUnique({
+    where: { email: req.user.email },
+    select: { id: true },
+  });
+
+  if (!college) throw new ApiError(404, "College not found");
+
+  /* ---------- COMPLETED STUDENTS ---------- */
+
+  let completedStudents = await prisma.student.findMany({
+    where: {
+      collegeId: college.id,
+    },
+    select: {
+      rollNo: true,
+      branch: true,
+      skills: true,
+      user: {
+        select: {
+          id: true,
+          name: true,
+          email: true,
+        },
+      },
+    },
+  });
+
+  completedStudents = completedStudents.map((student) => ({
+    rollNo: student.rollNo,
+    id: student.user.id,
+    name: student.user.name,
+    email: student.user.email,
+    branch: student.branch,
+    skills: student.skills,
+    status: "completed",
+  }));
+
+  /* ---------- PENDING STUDENTS ---------- */
+
+  let pendingStudents = await prisma.user.findMany({
+    where: {
+      metadata: {
+        path: ["collegeId"],
+        equals: college.id,
+      },
+    },
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      metadata: true,
+    },
+  });
+
+  pendingStudents = pendingStudents.map((student) => ({
+    id: student.id,
+    name: student.name,
+    email: student.email,
+    skills: [],
+    status: "pending",
+  }));
+
+  /* ---------- MERGE ---------- */
+
+  let students = [...completedStudents, ...pendingStudents];
+
+  /* ---------- FILTER ---------- */
+
+  if (filter === "branch") {
+    const branch = req.query.branch;
+    students = students.filter((s) => s.branch === branch);
+  }
+
+  if (filter === "status") {
+    const status = req.query.status;
+    students = students.filter((s) => s.status === status);
+  }
+
+  /* ---------- SORT ---------- */
+
+  students = students.sort((a, b) => {
+    const valA = (a[sortBy] || "").toString().toLowerCase();
+    const valB = (b[sortBy] || "").toString().toLowerCase();
+
+    if (valA < valB) return -1 * sortOrder;
+    if (valA > valB) return 1 * sortOrder;
+    return 0;
+  });
+
+  res.json(new ApiResponse(200, students, "students fetched!"));
+});
+
 export {
   uploadBulkStudents,
   createProfile,
@@ -1003,4 +1174,6 @@ export {
   apply,
   getJobsList,
   getJobDetail,
+  getStudentList,
+  getProfile,
 };

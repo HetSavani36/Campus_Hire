@@ -19,13 +19,14 @@ const makeStudentApplicationDecision = asyncHandler(async (req, res) => {
     applicationId: req.params.applicationId,
   });
 
-  const { applicationId, result } = req.params;
+  const { applicationId } = req.params;
+  const { result } = req.body
   if (!applicationId || !result)
     throw new ApiError(403, "please provide studentId and your decision");
-  if (!["1", "0"].includes(result))
+  if (!["approved", "rejected"].includes(result))
     throw new ApiError(403, "please provide proper decision in either 0 or 1");
 
-  const nextStatus = result === "1" ? "approved" : "rejected";
+  const nextStatus = result ;
   let applicationSnapshot = null;
   let occured = false;
 
@@ -343,8 +344,23 @@ const getJobDetails = asyncHandler(async (req, res) => {
           id: true,
           studentId: true,
           status: true,
+          mentorApproval: true, // Add this to know if you already approved them
+          student: {
+            // Add this block to get student details
+            select: {
+              rollNo: true,
+              branch: true,
+              resume: true,
+              user: {
+                select: {
+                  name: true,
+                  email: true,
+                },
+              },
+            },
+          },
         },
-      },
+      },  
     },
   });
 
@@ -418,9 +434,174 @@ const getJobDetails = asyncHandler(async (req, res) => {
 });
 
 
+const getStudentHistoryForMentor = asyncHandler(async (req, res) => {
+  log.info("request.start", {
+    action: "getStudentHistoryForMentor",
+    actorId: req.user.id,
+    studentId: req.params.studentId,
+  });
+
+  const { studentId } = req.params;
+  if (!studentId) throw new ApiError(400, "Please provide a student ID");
+
+  // Fetch the student, their user details, skills, and application history
+  const student = await prisma.student.findUnique({
+    where: { id: studentId },
+    select: {
+      id: true,
+      rollNo: true,
+      branch: true,
+      year: true,
+      resume: true,
+      aboutMe: true,
+      user: {
+        select: {
+          name: true,
+          email: true,
+        },
+      },
+      skills: {
+        select: {
+          skill: {
+            select: {
+              name: true,
+            },
+          },
+        },
+      },
+      // Deep fetch to get the application timeline
+      applications: {
+        select: {
+          id: true,
+          status: true, // Company decision
+          mentorApproval: true, // Mentor decision
+          appliedAt: true,
+          job: {
+            select: {
+              title: true,
+              company: {
+                select: {
+                  name: true,
+                },
+              },
+            },
+          },
+        },
+        orderBy: {
+          appliedAt: "desc", // Show the most recent applications at the top
+        },
+      },
+    },
+  });
+
+  if (!student) {
+    log.warn("mentorStudentHistory.not_found", { studentId });
+    throw new ApiError(404, "No such student found");
+  }
+
+  log.info("request.success", {
+    action: "getStudentHistoryForMentor",
+    studentId,
+  });
+
+  res.json(
+    new ApiResponse(200, student, "Student history fetched successfully"),
+  );
+});
+
+const getStudentsListForMentor = asyncHandler(async (req, res) => {
+  log.info("request.start", { 
+    action: "getStudentsListForMentor", 
+    actorId: req.user.id 
+  });
+
+  // 1. Find the mentor and get their collegeId
+  const mentor = await prisma.mentor.findUnique({
+    where: { userId: req.user.id },
+    select: { collegeId: true },
+  });
+
+  if (!mentor) {
+    log.warn("mentorStudents.mentor_not_found", { userId: req.user.id });
+    throw new ApiError(404, "Mentor profile not found");
+  }
+
+  // 2. Fetch all students that belong to the same college
+  const students = await prisma.student.findMany({
+    where: { collegeId: mentor.collegeId },
+    select: {
+      id: true,
+      rollNo: true,
+      branch: true,
+      year: true,
+      user: {
+        select: { 
+          name: true, 
+          email: true 
+        },
+      },
+    },
+    orderBy: { 
+      user: { name: "asc" } // Sort alphabetically by name
+    }
+  });
+
+  log.info("request.success", { 
+    action: "getStudentsListForMentor", 
+    studentCount: students.length 
+  });
+
+  res.json(new ApiResponse(200, students, "College students fetched successfully"));
+});
+
+// --- Fetch jobs with application summaries for the dashboard ---
+const getJobsWithApplicationSummary = asyncHandler(async (req, res) => {
+  log.info("request.start", { 
+    action: "getJobsWithApplicationSummary", 
+    actorId: req.user.id 
+  });
+
+  // 1. Resolve mentor
+  const mentor = await prisma.mentor.findUnique({
+    where: { userId: req.user.id },
+    select: { id: true }
+  });
+
+  if (!mentor) throw new ApiError(404, "Mentor not found");
+
+  // 2. Fetch jobs and nest the applications to check approval status
+  const jobs = await prisma.job.findMany({
+    where: { mentorId: mentor.id },
+    select: {
+      id: true,
+      title: true,
+      dueDate: true,
+      company: {
+        select: { name: true }
+      },
+      applications: {
+        select: {
+          id: true,
+          mentorApproval: true
+        }
+      }
+    },
+    orderBy: { createdAt: 'desc' }
+  });
+
+  log.info("request.success", { 
+    action: "getJobsWithApplicationSummary", 
+    count: jobs.length 
+  });
+
+  res.json(new ApiResponse(200, jobs, "Jobs with application summary fetched"));
+});
 
 export {
-    makeStudentApplicationDecision,
-    getAllJobs,
-    getJobDetails
-}
+  makeStudentApplicationDecision,
+  getAllJobs,
+  getJobDetails,
+  getStudentHistoryForMentor,
+  getStudentsListForMentor,
+  getJobsWithApplicationSummary,
+};
