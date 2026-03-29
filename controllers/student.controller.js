@@ -462,8 +462,6 @@ const addSkill = asyncHandler(async (req, res) => {
 
 
 const apply = asyncHandler(async (req, res) => {
-  console.log("apply");
-  
   log.info("request.start", {
     action: "applyJob",
     actorId: req.user.id,
@@ -896,9 +894,6 @@ const getJobsList = asyncHandler(async (req, res) => {
     returnedCount: jobs.length,
   });
 
-  console.log(responsePayLoad);
-  
-
   res.json(new ApiResponse(200, responsePayLoad, "student jobs"));
 });
 
@@ -1166,6 +1161,105 @@ const getStudentList = asyncHandler(async (req, res) => {
   res.json(new ApiResponse(200, students, "students fetched!"));
 });
 
+const getDashboardOverview = asyncHandler(async (req, res) => {
+  log.info("request.start", {
+    action: "getDashboardOverview",
+    actorId: req.user.id,
+  });
+
+  const student = await prisma.student.findUnique({
+    where: { userId: req.user.id },
+    select: { id: true, collegeId: true },
+  });
+
+  if (!student) throw new ApiError(404, "Student not found");
+
+  const now = new Date();
+
+  // What fields to select for the job cards
+  const jobSelect = {
+    id: true,
+    title: true,
+    salary: true,
+    dueDate: true,
+    company: { select: { name: true } },
+  };
+
+  const notAppliedWhere = {
+    status: "active",
+    collegeId: student.collegeId,
+    isApproved: true,
+    mentorId: { not: null },
+    dueDate: { gte: now },
+    applications: { none: { studentId: student.id } },
+  };
+
+  // Run all database operations concurrently
+  const [
+    appCounts, // 1. Gets all application counts in ONE query using GROUP BY
+    recentPendingApps, // 2. Gets the recent pending applications
+    availableCount, // 3. Counts available jobs
+    recommendedJobs, // 4. Gets the recommended jobs
+  ] = await Promise.all([
+    prisma.application.groupBy({
+      by: ["status"],
+      where: { studentId: student.id },
+      _count: true,
+    }),
+    prisma.application.findMany({
+      where: { studentId: student.id, status: "pending" },
+      orderBy: { appliedAt: "desc" },
+      take: 4,
+      select: { job: { select: jobSelect } },
+    }),
+    prisma.job.count({ where: notAppliedWhere }),
+    prisma.job.findMany({
+      where: notAppliedWhere,
+      orderBy: { dueDate: "asc" },
+      take: 4,
+      select: jobSelect,
+    }),
+  ]);
+
+  // Format the grouped counts into our variables
+  let pending = 0,
+    shortlisted = 0,
+    hired = 0,
+    rejected = 0;
+  appCounts.forEach((group) => {
+    if (group.status === "pending") pending = group._count;
+    if (group.status === "shortlisted") shortlisted = group._count;
+    if (group.status === "hired") hired = group._count;
+    if (group.status === "rejected") rejected = group._count;
+  });
+
+  // Map the recent applications to match the frontend's expected format
+  const recentApplications = recentPendingApps.map((app) => ({
+    ...app.job,
+    _status: "pending",
+  }));
+
+  const responsePayload = {
+    stats: {
+      available: availableCount,
+      pending,
+      shortlisted,
+      hired,
+      rejected,
+      totalApplied: pending + shortlisted + hired + rejected,
+    },
+    recentApplications,
+    recommendedJobs,
+  };
+
+  log.info("request.success", {
+    action: "getDashboardOverview",
+    studentId: student.id,
+  });
+
+  res.json(new ApiResponse(200, responsePayload, "Dashboard overview fetched"));
+});
+
 export {
   uploadBulkStudents,
   createProfile,
@@ -1176,4 +1270,5 @@ export {
   getJobDetail,
   getStudentList,
   getProfile,
+  getDashboardOverview
 };
